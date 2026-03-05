@@ -41,7 +41,8 @@ Upload (xlsx + csv)
 ```bash
 pip install -r requirements.txt
 python run.py
-# POST to http://localhost:5000/upload with matrix + rulebase files
+# Open http://localhost:5000/ in a browser to use the upload UI
+# Or POST directly to http://localhost:5000/upload with matrix + rulebase files
 ```
 
 ## Next Components to Build
