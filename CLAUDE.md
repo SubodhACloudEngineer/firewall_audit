@@ -24,6 +24,7 @@ Upload (xlsx + csv)
 - `app/reporting/excel_report.py`    — color-coded Excel report; generate_excel_report(AuditResult) → bytes
 - `app/routes.py`                    — GET / (index) + POST /upload endpoint
 - `templates/index.html`             — upload UI; posts to /upload, renders findings table
+- `tests/test_checks.py`             — 37 pytest unit tests for all 4 validation checks
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
 ## Data Models
@@ -43,13 +44,16 @@ pip install -r requirements.txt
 python run.py
 # Open http://localhost:5000/ in a browser to use the upload UI
 # Or POST directly to http://localhost:5000/upload with matrix + rulebase files
+
+# Run unit tests
+pytest tests/test_checks.py -v
 ```
 
 ## Next Components to Build
 - [x] app/reporting/excel_report.py   — color-coded Excel output (done 2026-03-05)
 - [ ] app/reporting/pdf_report.py     — PDF summary report
 - [x] templates/index.html            — upload UI (done 2026-03-05)
-- [ ] tests/test_checks.py            — unit tests for validation checks
+- [x] tests/test_checks.py            — 37 unit tests for all 4 checks (done 2026-03-05)
 - [ ] GET /results/<job_id>           — retrieve stored results
 - [ ] GET /download/<job_id>          — download generated report
 
@@ -74,3 +78,15 @@ Single-page upload interface served by `GET /`.
   filter buttons to narrow by severity, XSS-safe rendering
 - Zero-findings state renders a "fully compliant" message
 - `GET /` added to `app/routes.py` to serve the template
+
+## Tests — tests/test_checks.py
+37 pytest unit tests covering all four check functions (37/37 passing).
+
+| Class | Tests | What's covered |
+|---|---|---|
+| `TestCheckUnauthorizedFlows` | 8 | zone match, no-match (CRITICAL), disabled/deny skip, any-wildcard, multi-rule isolation, empty inputs |
+| `TestCheckConditionViolations` | 11 | compliant baseline, port violation (HIGH), `any`/`app-default` exemptions, missing logging (MEDIUM), log-forwarding as alternative, missing AV/URL profiles (HIGH), profile-group bypass, action mismatch (CRITICAL), disabled/unmatched rule skip |
+| `TestCheckMissingImplementations` | 7 | covered flow, uncovered flow (MEDIUM), disabled-rule gap, deny-policy skip, any-zone coverage, multi-policy isolation, empty inputs |
+| `TestCheckHygiene` | 9 | clean rule baseline, disabled (LOW), any-any permit (CRITICAL), any-any deny skip, shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
+
+Fixtures `make_policy()` and `make_fw_rule()` provide sensible defaults for minimal test setup.
