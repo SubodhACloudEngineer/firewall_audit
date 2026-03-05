@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Firewall Compliance Audit</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    header {
+      background: #1f3864;
+      color: #fff;
+      padding: 1.25rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: 0.02em; }
+    header span.badge {
+      background: #ff4c4c;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: 99px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    main { max-width: 960px; margin: 2.5rem auto; padding: 0 1.5rem 4rem; }
+
+    /* ── Upload card ──────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 2rem 2.5rem;
+    }
+    .card h2 { font-size: 1.05rem; color: #1f3864; margin-bottom: 1.5rem; }
+
+    .upload-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+    @media (max-width: 600px) { .upload-grid { grid-template-columns: 1fr; } }
+
+    .file-field label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #555;
+      margin-bottom: 0.4rem;
+    }
+    .file-field label span { color: #ff4c4c; }
+
+    .drop-zone {
+      border: 2px dashed #c5cfe0;
+      border-radius: 8px;
+      padding: 1.25rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: #1f3864;
+      background: #f5f8ff;
+    }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
+    }
+    .drop-zone .icon { font-size: 1.6rem; margin-bottom: 0.3rem; }
+    .drop-zone .hint { font-size: 0.78rem; color: #888; }
+    .drop-zone .filename {
+      font-size: 0.85rem; font-weight: 600; color: #1f3864;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .form-actions { margin-top: 1.75rem; display: flex; align-items: center; gap: 1rem; }
+
+    button[type="submit"] {
+      background: #1f3864;
+      color: #fff;
+      border: none;
+      padding: 0.7rem 2rem;
+      border-radius: 7px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button[type="submit"]:hover { background: #16294d; }
+    button[type="submit"]:disabled { background: #8a9abf; cursor: not-allowed; }
+
+    #status { font-size: 0.85rem; color: #666; }
+
+    /* ── Error banner ─────────────────────────────────────────────── */
+    #error-banner {
+      display: none;
+      background: #fff0f0;
+      border-left: 4px solid #ff4c4c;
+      color: #c0392b;
+      padding: 0.8rem 1rem;
+      border-radius: 6px;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+
+    /* ── Results section ──────────────────────────────────────────── */
+    #results { display: none; margin-top: 2rem; }
+
+    /* Score bar */
+    .score-bar-wrap {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 1.5rem 2rem;
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+    .score-circle {
+      width: 90px; height: 90px;
+      border-radius: 50%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-weight: 700; flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .score-circle .pct { font-size: 1.5rem; line-height: 1; }
+    .score-circle .lbl { font-size: 0.62rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.85; }
+
+    .score-compliant     { background: #70ad47; color: #fff; }
+    .score-partial       { background: #ffd700; color: #333; }
+    .score-noncompliant  { background: #ff4c4c; color: #fff; }
+
+    .score-meta h3 { font-size: 1rem; color: #1f3864; margin-bottom: 0.3rem; }
+    .score-meta p  { font-size: 0.82rem; color: #666; }
+
+    /* Severity chips */
+    .sev-chips { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-left: auto; }
+    .chip {
+      padding: 0.35rem 0.85rem;
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    .chip-critical { background: #ff4c4c; color: #fff; }
+    .chip-high     { background: #ff8c00; color: #fff; }
+    .chip-medium   { background: #ffd700; color: #333; }
+    .chip-low      { background: #70ad47; color: #fff; }
+
+    /* Findings table */
+    .findings-card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+    .findings-card header {
+      background: #1f3864;
+      padding: 0.9rem 1.5rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .findings-card header span { color: #a8bce0; font-weight: 400; font-size: 0.8rem; }
+
+    /* Filter bar */
+    .filter-bar {
+      padding: 0.75rem 1.5rem;
+      background: #f7f9fc;
+      border-bottom: 1px solid #e8ecf2;
+      display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+    }
+    .filter-bar span { font-size: 0.78rem; color: #888; margin-right: 0.25rem; }
+    .filter-btn {
+      border: 1.5px solid #c5cfe0;
+      background: #fff;
+      border-radius: 99px;
+      padding: 0.25rem 0.8rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn.active { color: #fff; border-color: transparent; }
+    .filter-btn[data-sev="ALL"].active   { background: #1f3864; }
+    .filter-btn[data-sev="CRITICAL"].active { background: #ff4c4c; }
+    .filter-btn[data-sev="HIGH"].active     { background: #ff8c00; }
+    .filter-btn[data-sev="MEDIUM"].active   { background: #b89a00; color: #fff; }
+    .filter-btn[data-sev="LOW"].active      { background: #70ad47; }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%; border-collapse: collapse; font-size: 0.83rem;
+    }
+    th {
+      background: #f0f3f8;
+      text-align: left;
+      padding: 0.65rem 1rem;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #555;
+      border-bottom: 2px solid #e0e6f0;
+      white-space: nowrap;
+    }
+    td {
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #eef0f5;
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafbff; }
+
+    /* Row tints */
+    tr.row-CRITICAL td { background: #fff5f5; }
+    tr.row-CRITICAL:hover td { background: #ffe8e8; }
+    tr.row-HIGH td     { background: #fff8f0; }
+    tr.row-HIGH:hover td { background: #ffeedd; }
+    tr.row-MEDIUM td   { background: #fffef0; }
+    tr.row-MEDIUM:hover td { background: #fff9cc; }
+    tr.row-LOW td      { background: #f4fdf0; }
+    tr.row-LOW:hover td { background: #e6f9de; }
+
+    .sev-badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .sev-CRITICAL { background: #ff4c4c; color: #fff; }
+    .sev-HIGH     { background: #ff8c00; color: #fff; }
+    .sev-MEDIUM   { background: #ffd700; color: #333; }
+    .sev-LOW      { background: #70ad47; color: #fff; }
+
+    .type-tag {
+      display: inline-block;
+      background: #eef1f8;
+      color: #1f3864;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+    }
+
+    .rule-name { font-family: monospace; font-size: 0.8rem; color: #444; }
+
+    .no-findings {
+      text-align: center;
+      padding: 2.5rem;
+      color: #70ad47;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    /* ── Spinner ──────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid #c5cfe0;
+      border-top-color: #1f3864;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>&#x1F6E1; Firewall Compliance Audit</h1>
+  <span class="badge">Palo Alto</span>
+</header>
+
+<main>
+
+  <!-- ── Upload form ──────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Upload Files to Audit</h2>
+    <form id="audit-form" novalidate>
+      <div class="upload-grid">
+
+        <div class="file-field">
+          <label>Security Policy Matrix <span>*</span></label>
+          <div class="drop-zone" id="dz-matrix">
+            <input type="file" name="matrix" id="input-matrix" accept=".xlsx,.xls" required />
+            <div class="icon">&#x1F4C4;</div>
+            <div class="filename" id="name-matrix">Drop .xlsx here or click to browse</div>
+            <div class="hint">Excel workbook (.xlsx)</div>
+          </div>
+        </div>
+
+        <div class="file-field">
+          <label>Firewall Rulebase Export <span>*</span></label>
+          <div class="drop-zone" id="dz-rulebase">
+            <input type="file" name="rulebase" id="input-rulebase" accept=".csv" required />
+            <div class="icon">&#x1F5C2;&#xFE0F;</div>
+            <div class="filename" id="name-rulebase">Drop .csv here or click to browse</div>
+            <div class="hint">Palo Alto rulebase CSV export</div>
+          </div>
+        </div>
+
+      </div><!-- /upload-grid -->
+
+      <div class="form-actions">
+        <button type="submit" id="submit-btn">Run Audit</button>
+        <span id="status"></span>
+      </div>
+
+      <div id="error-banner"></div>
+    </form>
+  </div>
+
+  <!-- ── Results ─────────────────────────────────────────────────── -->
+  <section id="results">
+
+    <!-- Score + severity summary -->
+    <div class="score-bar-wrap">
+      <div class="score-circle" id="score-circle">
+        <span class="pct" id="score-pct">—</span>
+        <span class="lbl">Score</span>
+      </div>
+      <div class="score-meta">
+        <h3 id="score-rating">—</h3>
+        <p id="score-meta-counts">—</p>
+      </div>
+      <div class="sev-chips">
+        <div class="chip chip-critical"><span id="cnt-critical">0</span> Critical</div>
+        <div class="chip chip-high"><span id="cnt-high">0</span> High</div>
+        <div class="chip chip-medium"><span id="cnt-medium">0</span> Medium</div>
+        <div class="chip chip-low"><span id="cnt-low">0</span> Low</div>
+      </div>
+    </div>
+
+    <!-- Findings table -->
+    <div class="findings-card">
+      <header>
+        Findings
+        <span id="findings-subtitle"></span>
+      </header>
+
+      <div class="filter-bar">
+        <span>Filter:</span>
+        <button class="filter-btn active" data-sev="ALL">All</button>
+        <button class="filter-btn" data-sev="CRITICAL">Critical</button>
+        <button class="filter-btn" data-sev="HIGH">High</button>
+        <button class="filter-btn" data-sev="MEDIUM">Medium</button>
+        <button class="filter-btn" data-sev="LOW">Low</button>
+      </div>
+
+      <div class="table-wrap">
+        <table id="findings-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Severity</th>
+              <th>Rule Name</th>
+              <th>Finding Type</th>
+              <th>Description</th>
+              <th>Remediation</th>
+            </tr>
+          </thead>
+          <tbody id="findings-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+<script>
+  /* ── File input labels ──────────────────────────────────────────── */
+  function wireDropZone(inputId, nameId, dzId) {
+    const input = document.getElementById(inputId);
+    const name  = document.getElementById(nameId);
+    const dz    = document.getElementById(dzId);
+
+    input.addEventListener('change', () => {
+      name.textContent = input.files[0] ? input.files[0].name : 'No file chosen';
+    });
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+    dz.addEventListener('drop', e => {
+      e.preventDefault();
+      dz.classList.remove('dragover');
+      if (e.dataTransfer.files.length) {
+        input.files = e.dataTransfer.files;
+        name.textContent = e.dataTransfer.files[0].name;
+      }
+    });
+  }
+  wireDropZone('input-matrix',  'name-matrix',  'dz-matrix');
+  wireDropZone('input-rulebase','name-rulebase','dz-rulebase');
+
+  /* ── Form submit ────────────────────────────────────────────────── */
+  const form       = document.getElementById('audit-form');
+  const submitBtn  = document.getElementById('submit-btn');
+  const statusEl   = document.getElementById('status');
+  const errorBanner = document.getElementById('error-banner');
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    errorBanner.style.display = 'none';
+    document.getElementById('results').style.display = 'none';
+
+    const matrix   = document.getElementById('input-matrix').files[0];
+    const rulebase = document.getElementById('input-rulebase').files[0];
+
+    if (!matrix || !rulebase) {
+      showError('Please select both a matrix (.xlsx) and a rulebase (.csv) file.');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('matrix',   matrix);
+    fd.append('rulebase', rulebase);
+
+    submitBtn.disabled = true;
+    statusEl.innerHTML = '<span class="spinner"></span> Running audit…';
+
+    try {
+      const res  = await fetch('/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      if (!res.ok) {
+        showError(data.error || `Server error (${res.status})`);
+        return;
+      }
+      renderResults(data);
+    } catch (err) {
+      showError('Network error — is the server running?');
+    } finally {
+      submitBtn.disabled = false;
+      statusEl.textContent = '';
+    }
+  });
+
+  /* ── Error helper ───────────────────────────────────────────────── */
+  function showError(msg) {
+    errorBanner.textContent = msg;
+    errorBanner.style.display = 'block';
+  }
+
+  /* ── Render results ─────────────────────────────────────────────── */
+  const SEV_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+
+  function renderResults(data) {
+    // Score circle
+    const score  = data.compliance_score;
+    const pctEl  = document.getElementById('score-pct');
+    const circle = document.getElementById('score-circle');
+    pctEl.textContent = score + '%';
+    circle.className = 'score-circle ' + (
+      score >= 90 ? 'score-compliant' :
+      score >= 70 ? 'score-partial'   : 'score-noncompliant'
+    );
+
+    // Rating + meta
+    const rating = score >= 90 ? 'COMPLIANT' : score >= 70 ? 'PARTIALLY COMPLIANT' : 'NON-COMPLIANT';
+    document.getElementById('score-rating').textContent = rating;
+    document.getElementById('score-meta-counts').textContent =
+      `${data.total_firewall_rules} firewall rules audited · ${data.total_policy_rules} policy matrix entries`;
+
+    // Severity chips
+    const sev = data.findings_by_severity || {};
+    document.getElementById('cnt-critical').textContent = sev.CRITICAL || 0;
+    document.getElementById('cnt-high').textContent     = sev.HIGH     || 0;
+    document.getElementById('cnt-medium').textContent   = sev.MEDIUM   || 0;
+    document.getElementById('cnt-low').textContent      = sev.LOW      || 0;
+
+    // Store findings globally for filtering
+    window._findings = (data.findings || []).slice().sort((a, b) => {
+      const ai = SEV_ORDER.indexOf(a.severity), bi = SEV_ORDER.indexOf(b.severity);
+      return ai !== bi ? ai - bi : (a.rule_name || '').localeCompare(b.rule_name || '');
+    });
+
+    document.getElementById('findings-subtitle').textContent =
+      `${window._findings.length} finding${window._findings.length !== 1 ? 's' : ''}`;
+
+    renderTable('ALL');
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function renderTable(filterSev) {
+    const tbody = document.getElementById('findings-tbody');
+    tbody.innerHTML = '';
+
+    const list = filterSev === 'ALL'
+      ? window._findings
+      : window._findings.filter(f => f.severity === filterSev);
+
+    if (list.length === 0) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 6;
+      td.className = 'no-findings';
+      td.textContent = filterSev === 'ALL'
+        ? '✓ No findings — rulebase is fully compliant.'
+        : `No ${filterSev} findings.`;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    list.forEach((f, i) => {
+      const tr = document.createElement('tr');
+      tr.className = `row-${f.severity}`;
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td><span class="sev-badge sev-${f.severity}">${f.severity}</span></td>
+        <td><span class="rule-name">${esc(f.rule_name || '—')}</span></td>
+        <td><span class="type-tag">${esc((f.finding_type || '').replace(/_/g, ' '))}</span></td>
+        <td>${esc(f.description)}</td>
+        <td>${esc(f.remediation)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* ── Severity filter buttons ────────────────────────────────────── */
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderTable(btn.dataset.sev);
+    });
+  });
+
+  /* ── XSS-safe escape ────────────────────────────────────────────── */
+  function esc(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+</script>
+
+</body>
+</html>

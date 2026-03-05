@@ -7,7 +7,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from flask import Blueprint, request, jsonify, send_file, current_app
+from flask import Blueprint, request, jsonify, send_file, current_app, render_template
 
 from app.ingestion.matrix_parser import parse_matrix
 from app.ingestion.rulebase_parser import parse_rulebase
@@ -23,6 +23,11 @@ ALLOWED_RULEBASE_EXT = {".csv"}
 
 def _allowed(filename: str, allowed: set) -> bool:
     return Path(filename).suffix.lower() in allowed
+
+
+@bp.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
 
 
 @bp.route("/upload", methods=["POST"])
