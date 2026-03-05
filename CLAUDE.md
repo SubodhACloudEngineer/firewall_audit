@@ -23,7 +23,7 @@ Upload (xlsx + csv)
 - `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult
 - `app/reporting/excel_report.py`    — color-coded Excel report; generate_excel_report(AuditResult) → bytes
 - `app/routes.py`                    — GET / (index) + POST /upload endpoint
-- `templates/index.html`             — upload UI; posts to /upload, renders findings table
+- `app/templates/index.html`         — upload UI; posts to /upload, renders findings table
 - `tests/test_checks.py`             — 37 pytest unit tests for all 4 validation checks
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
@@ -78,6 +78,7 @@ Single-page upload interface served by `GET /`.
   filter buttons to narrow by severity, XSS-safe rendering
 - Zero-findings state renders a "fully compliant" message
 - `GET /` added to `app/routes.py` to serve the template
+- Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 
 ## Tests — tests/test_checks.py
 37 pytest unit tests covering all four check functions (37/37 passing).
