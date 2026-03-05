@@ -21,7 +21,9 @@ Upload (xlsx + csv)
 - `app/models/__init__.py`           — PolicyRule, FirewallRule, Finding dataclasses
 - `app/validation/checks.py`         — 4 check functions (unauthorized, condition, missing, hygiene)
 - `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult
+- `app/reporting/excel_report.py`    — color-coded Excel report; generate_excel_report(AuditResult) → bytes
 - `app/routes.py`                    — POST /upload endpoint
+- `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
 ## Data Models
 - PolicyRule: what the MATRIX says is allowed (source_zone, dest_zone, ports, profiles, action)
@@ -42,9 +44,19 @@ python run.py
 ```
 
 ## Next Components to Build
-- [ ] app/reporting/excel_report.py   — color-coded Excel output
+- [x] app/reporting/excel_report.py   — color-coded Excel output (done 2026-03-05)
 - [ ] app/reporting/pdf_report.py     — PDF summary report
 - [ ] templates/index.html            — upload UI
 - [ ] tests/test_checks.py            — unit tests for validation checks
 - [ ] GET /results/<job_id>           — retrieve stored results
 - [ ] GET /download/<job_id>          — download generated report
+
+## Reporting — Excel
+`generate_excel_report(result: AuditResult) -> bytes` (openpyxl)
+
+- **Summary sheet**: compliance score with green/yellow/red fill, rating, rule counts,
+  findings breakdown by severity and type, full audit summary text
+- **Findings sheet**: one row per Finding, frozen header, sorted CRITICAL→HIGH→MEDIUM→LOW;
+  severity column filled red/orange/yellow/green; all columns tinted per severity for scannability
+- Zero-findings case renders a "fully compliant" placeholder row
+- Returns raw `.xlsx` bytes — write to disk or stream as HTTP response
