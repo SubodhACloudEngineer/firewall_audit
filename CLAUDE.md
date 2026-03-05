@@ -22,7 +22,8 @@ Upload (xlsx + csv)
 - `app/validation/checks.py`         — 4 check functions (unauthorized, condition, missing, hygiene)
 - `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult
 - `app/reporting/excel_report.py`    — color-coded Excel report; generate_excel_report(AuditResult) → bytes
-- `app/routes.py`                    — POST /upload endpoint
+- `app/routes.py`                    — GET / (index) + POST /upload endpoint
+- `templates/index.html`             — upload UI; posts to /upload, renders findings table
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
 ## Data Models
@@ -46,7 +47,7 @@ python run.py
 ## Next Components to Build
 - [x] app/reporting/excel_report.py   — color-coded Excel output (done 2026-03-05)
 - [ ] app/reporting/pdf_report.py     — PDF summary report
-- [ ] templates/index.html            — upload UI
+- [x] templates/index.html            — upload UI (done 2026-03-05)
 - [ ] tests/test_checks.py            — unit tests for validation checks
 - [ ] GET /results/<job_id>           — retrieve stored results
 - [ ] GET /download/<job_id>          — download generated report
@@ -60,3 +61,15 @@ python run.py
   severity column filled red/orange/yellow/green; all columns tinted per severity for scannability
 - Zero-findings case renders a "fully compliant" placeholder row
 - Returns raw `.xlsx` bytes — write to disk or stream as HTTP response
+
+## UI — templates/index.html
+Single-page upload interface served by `GET /`.
+
+- Two drag-and-drop file inputs: matrix (.xlsx) and rulebase (.csv)
+- Submits via `fetch` to `POST /upload` (multipart/form-data); no page reload
+- **Score circle**: green (≥90) / yellow (70–89) / red (<70) with COMPLIANT / PARTIALLY COMPLIANT / NON-COMPLIANT label
+- **Severity chips**: live counts for CRITICAL / HIGH / MEDIUM / LOW
+- **Findings table**: rows tinted by severity, severity badge color-coded red/orange/yellow/green,
+  filter buttons to narrow by severity, XSS-safe rendering
+- Zero-findings state renders a "fully compliant" message
+- `GET /` added to `app/routes.py` to serve the template
