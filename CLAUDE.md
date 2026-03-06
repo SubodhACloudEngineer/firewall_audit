@@ -17,7 +17,7 @@ Upload (xlsx + csv)
 ## Key Files
 - `app/ingestion/matrix_parser.py`   — parses Excel policy matrix → PolicyRule objects; supports IT/OT grid format and columnar format
 - `app/ingestion/rulebase_parser.py` — parses Palo Alto CSV rulebase → FirewallRule objects
-- `app/ingestion/normalizer.py`      — aligns both models to common schema
+- `app/ingestion/normalizer.py`      — aligns both models to common schema; translates raw FW zone names → ATPSG zones via zone_map
 - `app/models/__init__.py`           — PolicyRule, FirewallRule, Finding dataclasses
 - `app/validation/checks.py`         — 4 check functions (unauthorized, condition, missing, hygiene)
 - `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult
@@ -78,7 +78,12 @@ Explicit columns: `Source Zone`, `Destination Zone`, `Action`, plus optional
 
 ### Zone Assignments sheet
 `load_zone_assignments(filepath)` reads the optional "Zone Assignments" sheet
-and returns a `dict[interface_name → canonical_zone]` for use by the rulebase parser.
+and returns a `dict[raw_zone_name → canonical_atpsg_zone]`.
+
+This mapping is applied by `normalize_firewall_rules()` so that raw firewall
+zone names (e.g. `outside`, `ot-dmz-sr`) are translated to canonical ATPSG
+zone names (e.g. `it zone`, `ot dmz`) before comparison with the policy matrix.
+Zones not present in the map are kept as-is (pass-through).
 
 ## Next Components to Build
 - [x] app/reporting/excel_report.py   — color-coded Excel output (done 2026-03-05)
