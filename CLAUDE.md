@@ -22,7 +22,8 @@ Upload (xlsx + csv)
 - `app/validation/checks.py`         — 4 check functions (unauthorized, condition, missing, hygiene)
 - `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult
 - `app/reporting/excel_report.py`    — color-coded Excel report; generate_excel_report(AuditResult) → bytes
-- `app/routes.py`                    — GET / (index) + POST /upload endpoint
+- `app/reporting/pdf_report.py`      — A4 PDF report; generate_pdf_report(AuditResult) → bytes
+- `app/routes.py`                    — GET / · POST /upload · GET /download/<job_id>/excel · GET /download/<job_id>/pdf
 - `app/templates/index.html`         — upload UI; posts to /upload, renders findings table
 - `tests/test_checks.py`             — 37 pytest unit tests for all 4 validation checks
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
@@ -81,7 +82,7 @@ and returns a `dict[interface_name → canonical_zone]` for use by the rulebase 
 
 ## Next Components to Build
 - [x] app/reporting/excel_report.py   — color-coded Excel output (done 2026-03-05)
-- [ ] app/reporting/pdf_report.py     — PDF summary report
+- [x] app/reporting/pdf_report.py     — A4 PDF report with summary + findings (done 2026-03-06)
 - [x] templates/index.html            — upload UI (done 2026-03-05)
 - [x] tests/test_checks.py            — 37 unit tests for all 4 checks (done 2026-03-05)
 - [ ] GET /results/<job_id>           — retrieve stored results
@@ -97,6 +98,22 @@ and returns a `dict[interface_name → canonical_zone]` for use by the rulebase 
 - Zero-findings case renders a "fully compliant" placeholder row
 - Returns raw `.xlsx` bytes — write to disk or stream as HTTP response
 
+## Reporting — PDF
+`generate_pdf_report(result: AuditResult) -> bytes` (reportlab)
+
+- **Page 1 — Executive Summary**: colour-coded compliance score box (green/yellow/red),
+  rating label, rule counts, findings by severity table, findings by type table, summary text
+- **Page 2+ — Findings Detail**: one row per Finding sorted CRITICAL→LOW; severity cell
+  solid-filled, all other columns tinted by severity; wrapping text in description/remediation
+- Returns raw `.pdf` bytes
+
+## Routes
+- `GET /`                        — serves upload UI
+- `POST /upload`                 — runs full audit pipeline; saves `report.xlsx` and
+  `report.pdf` to `reports/<job_id>/`; returns JSON with findings + `download_excel`/`download_pdf` URLs
+- `GET /download/<job_id>/excel` — streams the saved `.xlsx` report as an attachment
+- `GET /download/<job_id>/pdf`   — streams the saved `.pdf` report as an attachment
+
 ## UI — templates/index.html
 Single-page upload interface served by `GET /`.
 
@@ -107,6 +124,8 @@ Single-page upload interface served by `GET /`.
 - **Findings table**: rows tinted by severity, severity badge color-coded red/orange/yellow/green,
   filter buttons to narrow by severity, XSS-safe rendering
 - Zero-findings state renders a "fully compliant" message
+- **Download bar**: appears after a successful audit with Excel (.xlsx) and PDF buttons
+  linking to `GET /download/<job_id>/excel` and `/pdf`
 - `GET /` added to `app/routes.py` to serve the template
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 

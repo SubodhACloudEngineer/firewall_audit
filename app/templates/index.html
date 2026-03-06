@@ -273,6 +273,42 @@
       font-size: 0.95rem;
     }
 
+    /* ── Download bar ─────────────────────────────────────────────── */
+    #download-bar {
+      display: none;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 1rem 1.5rem;
+      margin-bottom: 1.25rem;
+      display: none;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    #download-bar .dl-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #555;
+      margin-right: 0.25rem;
+    }
+    .dl-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.55rem 1.2rem;
+      border-radius: 7px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s;
+    }
+    .dl-btn:hover { opacity: 0.85; }
+    .dl-btn-excel { background: #217346; color: #fff; }
+    .dl-btn-pdf   { background: #c0392b; color: #fff; }
+
     /* ── Spinner ──────────────────────────────────────────────────── */
     .spinner {
       display: inline-block;
@@ -334,6 +370,17 @@
 
   <!-- ── Results ─────────────────────────────────────────────────── -->
   <section id="results">
+
+    <!-- Download bar -->
+    <div id="download-bar">
+      <span class="dl-label">&#x2B07; Download Report:</span>
+      <a id="dl-excel" href="#" class="dl-btn dl-btn-excel">
+        &#x1F4C8; Excel (.xlsx)
+      </a>
+      <a id="dl-pdf" href="#" class="dl-btn dl-btn-pdf">
+        &#x1F4CB; PDF
+      </a>
+    </div>
 
     <!-- Score + severity summary -->
     <div class="score-bar-wrap">
@@ -424,6 +471,7 @@
     e.preventDefault();
     errorBanner.style.display = 'none';
     document.getElementById('results').style.display = 'none';
+    document.getElementById('download-bar').style.display = 'none';
 
     const matrix   = document.getElementById('input-matrix').files[0];
     const rulebase = document.getElementById('input-rulebase').files[0];
@@ -467,6 +515,13 @@
   const SEV_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
   function renderResults(data) {
+    // Download bar
+    if (data.download_excel && data.download_pdf) {
+      document.getElementById('dl-excel').href = data.download_excel;
+      document.getElementById('dl-pdf').href   = data.download_pdf;
+      document.getElementById('download-bar').style.display = 'flex';
+    }
+
     // Score circle
     const score  = data.compliance_score;
     const pctEl  = document.getElementById('score-pct');
