@@ -9,7 +9,7 @@ from pathlib import Path
 
 from flask import Blueprint, request, jsonify, send_file, current_app, render_template
 
-from app.ingestion.matrix_parser import parse_matrix
+from app.ingestion.matrix_parser import parse_matrix, load_zone_assignments
 from app.ingestion.rulebase_parser import parse_rulebase
 from app.ingestion.normalizer import normalize_all
 from app.validation.engine import run_audit
@@ -68,8 +68,9 @@ def upload_and_audit():
     try:
         # Ingestion
         policy_rules = parse_matrix(matrix_path)
+        zone_map     = load_zone_assignments(matrix_path)   # raw zone → ATPSG zone
         firewall_rules = parse_rulebase(rulebase_path)
-        policy_rules, firewall_rules = normalize_all(policy_rules, firewall_rules)
+        policy_rules, firewall_rules = normalize_all(policy_rules, firewall_rules, zone_map)
 
         # Validation
         result = run_audit(policy_rules, firewall_rules)
