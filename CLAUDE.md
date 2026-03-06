@@ -15,7 +15,7 @@ Upload (xlsx + csv)
 ```
 
 ## Key Files
-- `app/ingestion/matrix_parser.py`   — parses Excel policy matrix → PolicyRule objects
+- `app/ingestion/matrix_parser.py`   — parses Excel policy matrix → PolicyRule objects; supports IT/OT grid format and columnar format
 - `app/ingestion/rulebase_parser.py` — parses Palo Alto CSV rulebase → FirewallRule objects
 - `app/ingestion/normalizer.py`      — aligns both models to common schema
 - `app/models/__init__.py`           — PolicyRule, FirewallRule, Finding dataclasses
@@ -48,6 +48,36 @@ python run.py
 # Run unit tests
 pytest tests/test_checks.py -v
 ```
+
+## Matrix Parser — Supported Formats
+
+`parse_matrix(filepath) -> List[PolicyRule]`
+
+### Format 1 — IT/OT Grid (auto-detected, preferred)
+Zone names appear as both row headers (source) and column headers (destination).
+Cell text determines the policy:
+
+| Cell text | Action |
+|---|---|
+| "May be allowed" | `allow` |
+| "Within a shop may be allowed…" | `allow` |
+| "Shall not be allowed" | `deny` |
+| "Should not be allowed²" | `deny` (footnote markers stripped) |
+| "Direct access shall not be allowed…" | `deny` |
+| "Out of scope" / blank / diagonal | skipped |
+
+- Scans first sheet whose name contains "matrix" first, then all other sheets
+- Header row auto-detected by finding a row with ≥ 3 known zone names
+- Zone names normalised via `ZONE_ALIASES`: "OT-DMZ" == "OT DMZ" == "ot dmz"
+- All parsed rules default to `allowed_ports={"any"}`, `logging_required=True`
+
+### Format 2 — Columnar (fallback)
+Explicit columns: `Source Zone`, `Destination Zone`, `Action`, plus optional
+`Allowed Ports`, `Allowed Applications`, `AV Profile`, `URL Profile`, `Log Required`.
+
+### Zone Assignments sheet
+`load_zone_assignments(filepath)` reads the optional "Zone Assignments" sheet
+and returns a `dict[interface_name → canonical_zone]` for use by the rulebase parser.
 
 ## Next Components to Build
 - [x] app/reporting/excel_report.py   — color-coded Excel output (done 2026-03-05)
