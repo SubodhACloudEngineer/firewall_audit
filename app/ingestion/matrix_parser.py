@@ -287,14 +287,22 @@ def load_zone_assignments(filepath: Path) -> Dict[str, str]:
             if "zone" in sheet.lower() and "assign" in sheet.lower():
                 df = pd.read_excel(filepath, sheet_name=sheet, header=0)
                 df.columns = [str(c).strip().lower() for c in df.columns]
-                name_col = next((c for c in df.columns if "name" in c), None)
-                zone_col = next((c for c in df.columns if "zone" in c), None)
-                if name_col and zone_col:
+                # Columns are "Zone" (raw FW zone name) and "ATPSG Zone" (canonical name).
+                # After lowercasing: "zone" and "atpsg zone".
+                # Pick the ATPSG column first (contains "atpsg"), then treat the
+                # remaining zone-ish column as the raw-name column.
+                atpsg_col = next((c for c in df.columns if "atpsg" in c), None)
+                raw_col   = next((c for c in df.columns if "zone" in c and c != atpsg_col), None)
+                # Fallback: if no "atpsg" header, treat first column as raw, second as canonical
+                if not atpsg_col and len(df.columns) >= 2:
+                    raw_col   = df.columns[0]
+                    atpsg_col = df.columns[1]
+                if raw_col and atpsg_col:
                     mapping: Dict[str, str] = {}
                     for _, row in df.iterrows():
-                        name = str(row[name_col]).strip()
-                        zone = str(row[zone_col]).strip()
-                        if name and zone and name != "nan" and zone != "nan":
+                        name = str(row[raw_col]).strip()
+                        zone = str(row[atpsg_col]).strip()
+                        if name and zone and name != "nan" and zone != "nan" and zone != "?":
                             mapping[name.lower()] = _canonical_zone(zone)
                     logger.info(f"Loaded {len(mapping)} zone assignments from '{sheet}'")
                     return mapping
