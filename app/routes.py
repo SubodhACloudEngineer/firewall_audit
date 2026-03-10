@@ -28,17 +28,33 @@ def _allowed(filename: str, allowed: set) -> bool:
     return Path(filename).suffix.lower() in allowed
 
 
-_LOGO_PATH = Path(__file__).resolve().parent / "static" / "ntt_data_logo.png"
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# Candidate logo filenames tried in order; first match wins.
+# Covers the correct name, the accidental double-extension, and the SVG variant.
+_LOGO_CANDIDATES = [
+    ("ntt_data_logo.png",     "image/png"),
+    ("ntt_data_logo.png.png", "image/png"),
+    ("logo.png",              "image/png"),
+    ("logo.svg",              "image/svg+xml"),
+]
+
+
+def _load_logo_src() -> str:
+    """Return a base64 data-URL for the first logo file found, or empty string."""
+    for filename, mime in _LOGO_CANDIDATES:
+        path = _STATIC_DIR / filename
+        if path.exists():
+            data = base64.b64encode(path.read_bytes()).decode()
+            logger.info(f"Logo loaded from {path}")
+            return f"data:{mime};base64,{data}"
+    logger.warning(f"Logo not found in {_STATIC_DIR}. Tried: {[f for f,_ in _LOGO_CANDIDATES]}")
+    return ""
 
 
 @bp.route("/", methods=["GET"])
 def index():
-    logo_b64 = None
-    if _LOGO_PATH.exists():
-        logo_b64 = base64.b64encode(_LOGO_PATH.read_bytes()).decode()
-    else:
-        logger.warning(f"Logo not found at {_LOGO_PATH}")
-    return render_template("index.html", logo_b64=logo_b64)
+    return render_template("index.html", logo_src=_load_logo_src())
 
 
 @bp.route("/upload", methods=["POST"])

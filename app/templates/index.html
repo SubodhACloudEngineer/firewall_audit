@@ -339,9 +339,8 @@
 <body>
 
 <header>
-  {% if logo_b64 %}
-  <img src="data:image/png;base64,{{ logo_b64 }}"
-       alt="NTT DATA" class="header-logo" />
+  {% if logo_src %}
+  <img src="{{ logo_src }}" alt="NTT DATA" class="header-logo" />
   <div class="header-divider"></div>
   {% endif %}
   <h1>&#x1F6E1; Firewall Compliance Audit</h1>
