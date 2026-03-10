@@ -25,7 +25,8 @@ Upload (xlsx + csv)
 - `app/reporting/pdf_report.py`      — A4 PDF report; generate_pdf_report(AuditResult) → bytes
 - `app/routes.py`                    — GET / · POST /upload · GET /download/<job_id>/excel · GET /download/<job_id>/pdf
 - `app/templates/index.html`         — upload UI; posts to /upload, renders findings table
-- `tests/test_checks.py`             — 37 pytest unit tests for all 4 validation checks
+- `app/static/ntt_data_logo.png`     — NTT DATA company logo served by Flask static handler; displayed in header
+- `tests/test_checks.py`             — 42 pytest unit tests for all 4 validation checks
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
 ## Data Models
@@ -112,6 +113,7 @@ Zones not present in the map are kept as-is (pass-through).
 - [x] templates/index.html            — upload UI (done 2026-03-05)
 - [x] tests/test_checks.py            — 37 unit tests for all 4 checks (done 2026-03-05)
 - [x] load_zone_assignments column detection bug (fixed 2026-03-10)
+- [x] NTT DATA logo in UI header (done 2026-03-10)
 - [ ] GET /results/<job_id>           — retrieve stored results
 - [x] GET /download/<job_id>/excel    — stream saved .xlsx report (done 2026-03-05)
 - [x] GET /download/<job_id>/pdf      — stream saved .pdf report (done 2026-03-06)
@@ -154,8 +156,11 @@ Single-page upload interface served by `GET /`.
 - Zero-findings state renders a "fully compliant" message
 - **Download bar**: appears after a successful audit with Excel (.xlsx) and PDF buttons
   linking to `GET /download/<job_id>/excel` and `/pdf`
+- **Header logo**: NTT DATA logo (`app/static/ntt_data_logo.png`) displayed on a white
+  pill background in the page header, left of the title; served via `url_for('static', ...)`
 - `GET /` added to `app/routes.py` to serve the template
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
+- Static assets live at `app/static/`; Flask serves them at `/static/<filename>`
 
 ## Tests — tests/test_checks.py
 42 pytest unit tests covering all four check functions (42/42 passing).
