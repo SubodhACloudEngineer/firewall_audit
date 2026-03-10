@@ -25,6 +25,7 @@ def make_policy(
     required_profiles=None,
     logging_required=True,
     action="allow",
+    deny_severity=None,
 ):
     return PolicyRule(
         source_zone=source_zone,
@@ -34,6 +35,7 @@ def make_policy(
         required_profiles=required_profiles if required_profiles is not None else {},
         logging_required=logging_required,
         action=action,
+        deny_severity=deny_severity,
     )
 
 
@@ -225,12 +227,40 @@ class TestCheckConditionViolations:
         assert url_findings[0].severity == Finding.SEVERITY_HIGH
 
     def test_action_mismatch_flagged_as_critical(self):
+        # deny policy with no deny_severity → falls back to CRITICAL
         policy = make_policy(action="deny")
         fw_rule = make_fw_rule(action="allow")
         findings = check_condition_violations([fw_rule], [policy])
         action_findings = [f for f in findings if "action" in f.description.lower()]
         assert len(action_findings) == 1
         assert action_findings[0].severity == Finding.SEVERITY_CRITICAL
+
+    def test_shall_not_be_allowed_violation_flagged_as_critical(self):
+        # "Shall not be allowed" → deny_severity=CRITICAL
+        policy = make_policy(action="deny", deny_severity=Finding.SEVERITY_CRITICAL)
+        fw_rule = make_fw_rule(action="allow")
+        findings = check_condition_violations([fw_rule], [policy])
+        action_findings = [f for f in findings if "action" in f.description.lower()]
+        assert len(action_findings) == 1
+        assert action_findings[0].severity == Finding.SEVERITY_CRITICAL
+
+    def test_should_not_be_allowed_violation_flagged_as_high(self):
+        # "Should not be allowed" → deny_severity=HIGH (conditional prohibition)
+        policy = make_policy(action="deny", deny_severity=Finding.SEVERITY_HIGH)
+        fw_rule = make_fw_rule(action="allow")
+        findings = check_condition_violations([fw_rule], [policy])
+        action_findings = [f for f in findings if "action" in f.description.lower()]
+        assert len(action_findings) == 1
+        assert action_findings[0].severity == Finding.SEVERITY_HIGH
+
+    def test_deny_fw_rule_skipped_in_condition_check(self):
+        # FW rules with action=deny are discarded — no findings even with policy violations
+        policy = make_policy(action="allow", logging_required=True,
+                             required_profiles={"av": "strict"})
+        fw_rule = make_fw_rule(action="deny", log_at_session_end=False,
+                               av_profile=None, security_profile_group=None)
+        findings = check_condition_violations([fw_rule], [policy])
+        assert findings == []
 
     def test_disabled_rule_skipped(self):
         policy = make_policy(logging_required=True, required_profiles={"av": "strict"})

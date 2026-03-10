@@ -29,14 +29,20 @@ Upload (xlsx + csv)
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
 ## Data Models
-- PolicyRule: what the MATRIX says is allowed (source_zone, dest_zone, ports, profiles, action)
+- PolicyRule: what the MATRIX says is allowed/denied (source_zone, dest_zone, ports, profiles, action, deny_severity)
+  - `deny_severity` is set for deny-action rules only: `"HIGH"` for "Should not be allowed", `"CRITICAL"` for "Shall not be allowed"
 - FirewallRule: what the FIREWALL actually has (rule_name, zones, services, profiles, logging)
+  - Rules with `action="deny"` are discarded before auditing — only allow rules are validated
 - Finding: a compliance violation (type, severity, description, remediation)
 
 ## Validation Checks
-1. UNAUTHORIZED_FLOW    — firewall rule with no matching matrix entry (CRITICAL)
-2. CONDITION_VIOLATION  — wrong ports / missing profiles / no logging (HIGH/MEDIUM)
-3. MISSING_IMPLEMENTATION — matrix entry with no firewall rule (MEDIUM)
+
+Firewall rules with `action="deny"` are discarded before all checks — only `allow` rules are audited.
+
+1. UNAUTHORIZED_FLOW    — firewall allow rule with no matching matrix entry (CRITICAL)
+2. CONDITION_VIOLATION  — wrong ports / missing profiles / no logging (HIGH/MEDIUM);
+   action mismatch severity follows the matrix: "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
+3. MISSING_IMPLEMENTATION — allow matrix entry with no firewall rule (MEDIUM)
 4. HYGIENE              — disabled rules, any-any, shadowed rules (LOW/CRITICAL)
 
 ## Dev Setup
@@ -58,14 +64,16 @@ pytest tests/test_checks.py -v
 Zone names appear as both row headers (source) and column headers (destination).
 Cell text determines the policy:
 
-| Cell text | Action |
-|---|---|
-| "May be allowed" | `allow` |
-| "Within a shop may be allowed…" | `allow` |
-| "Shall not be allowed" | `deny` |
-| "Should not be allowed²" | `deny` (footnote markers stripped) |
-| "Direct access shall not be allowed…" | `deny` |
-| "Out of scope" / blank / diagonal | skipped |
+| Cell text | Action | `deny_severity` |
+|---|---|---|
+| "May be allowed" | `allow` | — |
+| "Within a shop may be allowed…" | `allow` | — |
+| "Should not be allowed²" | `deny` | `HIGH` (conditional prohibition; footnote markers stripped) |
+| "Shall not be allowed" | `deny` | `CRITICAL` (absolute prohibition) |
+| "Direct access shall not be allowed…" | `deny` | `CRITICAL` |
+| "Out of scope" / blank / diagonal | skipped | — |
+
+`deny_severity` controls the severity of a CONDITION_VIOLATION finding when a firewall `allow` rule contradicts a matrix `deny` entry.
 
 - Scans first sheet whose name contains "matrix" first, then all other sheets
 - Header row auto-detected by finding a row with ≥ 3 known zone names
@@ -149,12 +157,12 @@ Single-page upload interface served by `GET /`.
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 
 ## Tests — tests/test_checks.py
-37 pytest unit tests covering all four check functions (37/37 passing).
+40 pytest unit tests covering all four check functions (40/40 passing).
 
 | Class | Tests | What's covered |
 |---|---|---|
 | `TestCheckUnauthorizedFlows` | 8 | zone match, no-match (CRITICAL), disabled/deny skip, any-wildcard, multi-rule isolation, empty inputs |
-| `TestCheckConditionViolations` | 11 | compliant baseline, port violation (HIGH), `any`/`app-default` exemptions, missing logging (MEDIUM), log-forwarding as alternative, missing AV/URL profiles (HIGH), profile-group bypass, action mismatch (CRITICAL), disabled/unmatched rule skip |
+| `TestCheckConditionViolations` | 15 | compliant baseline, port violation (HIGH), `any`/`app-default` exemptions, missing logging (MEDIUM), log-forwarding as alternative, missing AV/URL profiles (HIGH), profile-group bypass, action mismatch (CRITICAL), "shall not be allowed" → CRITICAL, "should not be allowed" → HIGH, deny FW rule skipped, disabled/unmatched rule skip |
 | `TestCheckMissingImplementations` | 7 | covered flow, uncovered flow (MEDIUM), disabled-rule gap, deny-policy skip, any-zone coverage, multi-policy isolation, empty inputs |
 | `TestCheckHygiene` | 9 | clean rule baseline, disabled (LOW), any-any permit (CRITICAL), any-any deny skip, shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
 

@@ -55,14 +55,18 @@ def run_audit(
         f"{len(firewall_rules)} firewall rules"
     )
 
+    # Deny rules in the rulebase are discarded — they need no audit.
+    # Only "allow" rules can create unauthorized or misconfigured flows.
+    allow_rules = [r for r in firewall_rules if r.action != "deny"]
+
     all_findings: List[Finding] = []
 
-    all_findings.extend(check_unauthorized_flows(firewall_rules, policy_rules))
-    all_findings.extend(check_condition_violations(firewall_rules, policy_rules))
-    all_findings.extend(check_missing_implementations(firewall_rules, policy_rules))
-    all_findings.extend(check_hygiene(firewall_rules))
+    all_findings.extend(check_unauthorized_flows(allow_rules, policy_rules))
+    all_findings.extend(check_condition_violations(allow_rules, policy_rules))
+    all_findings.extend(check_missing_implementations(allow_rules, policy_rules))
+    all_findings.extend(check_hygiene(allow_rules))
 
-    score = _calculate_score(all_findings, firewall_rules)
+    score = _calculate_score(all_findings, allow_rules)
 
     by_severity = {s: 0 for s in SEVERITY_WEIGHTS}
     by_type: Dict[str, int] = {}
