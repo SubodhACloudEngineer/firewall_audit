@@ -19,10 +19,24 @@
     header {
       background: #1f3864;
       color: #fff;
-      padding: 1.25rem 2rem;
+      padding: 1rem 2rem;
       display: flex;
       align-items: center;
-      gap: 0.75rem;
+      gap: 1rem;
+    }
+    .header-logo {
+      height: 36px;
+      width: auto;
+      background: #fff;
+      padding: 4px 10px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .header-divider {
+      width: 1px;
+      height: 28px;
+      background: rgba(255,255,255,0.25);
+      flex-shrink: 0;
     }
     header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: 0.02em; }
     header span.badge {
@@ -325,6 +339,9 @@
 <body>
 
 <header>
+  <img src="{{ url_for('static', filename='ntt_data_logo.png') }}"
+       alt="NTT DATA" class="header-logo" />
+  <div class="header-divider"></div>
   <h1>&#x1F6E1; Firewall Compliance Audit</h1>
   <span class="badge">Palo Alto</span>
 </header>
