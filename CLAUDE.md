@@ -80,6 +80,18 @@ Explicit columns: `Source Zone`, `Destination Zone`, `Action`, plus optional
 `load_zone_assignments(filepath)` reads the optional "Zone Assignments" sheet
 and returns a `dict[raw_zone_name → canonical_atpsg_zone]`.
 
+Expected sheet columns (case-insensitive):
+
+| Column | Contains |
+|---|---|
+| `Zone` | Raw firewall zone name (e.g. `outside`, `ot-dmz-sr`) |
+| `ATPSG Zone` | Canonical ATPSG zone name (e.g. `IT Zone`, `OT DMZ`) |
+
+- The ATPSG column is detected by looking for `"atpsg"` in the header name.
+- Rows where the ATPSG Zone cell is `?` (unmapped) are skipped.
+- Fallback: if no `"atpsg"` header is found, col[0]=raw, col[1]=canonical.
+- All keys stored lower-case; values passed through `_canonical_zone()`.
+
 This mapping is applied by `normalize_firewall_rules()` so that raw firewall
 zone names (e.g. `outside`, `ot-dmz-sr`) are translated to canonical ATPSG
 zone names (e.g. `it zone`, `ot dmz`) before comparison with the policy matrix.
@@ -90,8 +102,10 @@ Zones not present in the map are kept as-is (pass-through).
 - [x] app/reporting/pdf_report.py     — A4 PDF report with summary + findings (done 2026-03-06)
 - [x] templates/index.html            — upload UI (done 2026-03-05)
 - [x] tests/test_checks.py            — 37 unit tests for all 4 checks (done 2026-03-05)
+- [x] load_zone_assignments column detection bug (fixed 2026-03-10)
 - [ ] GET /results/<job_id>           — retrieve stored results
-- [ ] GET /download/<job_id>          — download generated report
+- [x] GET /download/<job_id>/excel    — stream saved .xlsx report (done 2026-03-05)
+- [x] GET /download/<job_id>/pdf      — stream saved .pdf report (done 2026-03-06)
 
 ## Reporting — Excel
 `generate_excel_report(result: AuditResult) -> bytes` (openpyxl)
