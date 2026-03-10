@@ -5,6 +5,7 @@ Handles file uploads, triggers the audit pipeline, and returns results.
 
 import logging
 import uuid
+import base64
 from pathlib import Path
 
 from flask import Blueprint, request, jsonify, send_file, current_app, render_template
@@ -27,9 +28,17 @@ def _allowed(filename: str, allowed: set) -> bool:
     return Path(filename).suffix.lower() in allowed
 
 
+_LOGO_PATH = Path(__file__).resolve().parent / "static" / "ntt_data_logo.png"
+
+
 @bp.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    logo_b64 = None
+    if _LOGO_PATH.exists():
+        logo_b64 = base64.b64encode(_LOGO_PATH.read_bytes()).decode()
+    else:
+        logger.warning(f"Logo not found at {_LOGO_PATH}")
+    return render_template("index.html", logo_b64=logo_b64)
 
 
 @bp.route("/upload", methods=["POST"])
