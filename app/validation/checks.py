@@ -279,23 +279,31 @@ def check_hygiene(firewall_rules: List[FirewallRule]) -> List[Finding]:
             ))
             continue
 
-        # Any-Any permit
-        if (
-            fw_rule.action == "allow"
-            and "any" in fw_rule.source_zones
-            and "any" in fw_rule.dest_zones
-            and "any" in fw_rule.services
-        ):
+        # Any-zone permit — "any" in source or destination zone falls under
+        # "Shall not be allowed" (CRITICAL) because it creates unrestricted
+        # lateral paths that are never sanctioned by the policy matrix.
+        src_any = fw_rule.action == "allow" and "any" in fw_rule.source_zones
+        dst_any = fw_rule.action == "allow" and "any" in fw_rule.dest_zones
+        if src_any or dst_any:
+            which_zones = []
+            if src_any:
+                which_zones.append("source zone")
+            if dst_any:
+                which_zones.append("destination zone")
+            zone_desc = " and ".join(which_zones)
             findings.append(Finding(
                 rule_name=fw_rule.rule_name,
                 finding_type="HYGIENE_ANY_ANY_PERMIT",
                 severity=Finding.SEVERITY_CRITICAL,
                 description=(
-                    f"Rule '{fw_rule.rule_name}' permits ALL traffic from ANY zone to ANY zone "
-                    f"on ANY service. This is extremely overly permissive."
+                    f"Rule '{fw_rule.rule_name}' uses 'any' in the {zone_desc}. "
+                    f"This falls under 'Shall not be allowed' and is overly permissive."
                 ),
-                details={"rule_index": fw_rule.rule_index},
-                remediation="Replace with specific zone-pair rules matching the policy matrix.",
+                details={"rule_index": fw_rule.rule_index, "any_in_zones": which_zones},
+                remediation=(
+                    f"Replace 'any' in the {zone_desc} with specific zone names "
+                    f"that match the policy matrix."
+                ),
             ))
 
     # Shadowed rules — a rule is shadowed if an identical or broader rule appears before it
