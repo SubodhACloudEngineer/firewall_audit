@@ -161,6 +161,7 @@ Single-page upload interface served by `GET /`.
 - `GET /` added to `app/routes.py` to serve the template
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 - Static assets live at `app/static/`; Flask serves them at `/static/<filename>`
+- `static_folder` is set to an explicit absolute path in `create_app()` (`Path(__file__).resolve().parent / "static"`) to prevent 404s from WSL/Windows path resolution quirks
 
 ## Tests — tests/test_checks.py
 42 pytest unit tests covering all four check functions (42/42 passing).
