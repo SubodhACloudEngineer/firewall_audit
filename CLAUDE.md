@@ -43,7 +43,8 @@ Firewall rules with `action="deny"` are discarded before all checks — only `al
 2. CONDITION_VIOLATION  — wrong ports / missing profiles / no logging (HIGH/MEDIUM);
    action mismatch severity follows the matrix: "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
 3. MISSING_IMPLEMENTATION — allow matrix entry with no firewall rule (MEDIUM)
-4. HYGIENE              — disabled rules, any-any, shadowed rules (LOW/CRITICAL)
+4. HYGIENE              — disabled rules, any-zone permit, shadowed rules (LOW/CRITICAL);
+   "any" in source OR destination zone → CRITICAL ("Shall not be allowed"); description names the offending zone(s)
 
 ## Dev Setup
 ```bash
@@ -157,13 +158,13 @@ Single-page upload interface served by `GET /`.
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 
 ## Tests — tests/test_checks.py
-40 pytest unit tests covering all four check functions (40/40 passing).
+42 pytest unit tests covering all four check functions (42/42 passing).
 
 | Class | Tests | What's covered |
 |---|---|---|
 | `TestCheckUnauthorizedFlows` | 8 | zone match, no-match (CRITICAL), disabled/deny skip, any-wildcard, multi-rule isolation, empty inputs |
 | `TestCheckConditionViolations` | 15 | compliant baseline, port violation (HIGH), `any`/`app-default` exemptions, missing logging (MEDIUM), log-forwarding as alternative, missing AV/URL profiles (HIGH), profile-group bypass, action mismatch (CRITICAL), "shall not be allowed" → CRITICAL, "should not be allowed" → HIGH, deny FW rule skipped, disabled/unmatched rule skip |
 | `TestCheckMissingImplementations` | 7 | covered flow, uncovered flow (MEDIUM), disabled-rule gap, deny-policy skip, any-zone coverage, multi-policy isolation, empty inputs |
-| `TestCheckHygiene` | 9 | clean rule baseline, disabled (LOW), any-any permit (CRITICAL), any-any deny skip, shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
+| `TestCheckHygiene` | 11 | clean rule baseline, disabled (LOW), any-any permit (CRITICAL), any-any deny skip, any-source-zone (CRITICAL), any-dest-zone (CRITICAL), shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
 
 Fixtures `make_policy()` and `make_fw_rule()` provide sensible defaults for minimal test setup.

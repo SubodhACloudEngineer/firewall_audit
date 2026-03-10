@@ -381,6 +381,36 @@ class TestCheckHygiene:
         findings = check_hygiene([fw_rule])
         assert not any(f.finding_type == "HYGIENE_ANY_ANY_PERMIT" for f in findings)
 
+    def test_any_source_zone_flagged_as_critical(self):
+        # "any" in source zone only is still Shall-not-be-allowed → CRITICAL
+        fw_rule = make_fw_rule(
+            rule_name="any-src",
+            source_zones={"any"},
+            dest_zones={"untrust"},
+            services={"443"},
+            action="allow",
+        )
+        findings = check_hygiene([fw_rule])
+        any_findings = [f for f in findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
+        assert len(any_findings) == 1
+        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
+        assert "source zone" in any_findings[0].description
+
+    def test_any_dest_zone_flagged_as_critical(self):
+        # "any" in destination zone only is still Shall-not-be-allowed → CRITICAL
+        fw_rule = make_fw_rule(
+            rule_name="any-dst",
+            source_zones={"trust"},
+            dest_zones={"any"},
+            services={"443"},
+            action="allow",
+        )
+        findings = check_hygiene([fw_rule])
+        any_findings = [f for f in findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
+        assert len(any_findings) == 1
+        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
+        assert "destination zone" in any_findings[0].description
+
     def test_shadowed_rule_flagged(self):
         # Rule A: any→any allow all services — broad
         broad = make_fw_rule(
