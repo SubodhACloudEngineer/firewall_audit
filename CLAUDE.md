@@ -25,7 +25,8 @@ Upload (xlsx + csv)
 - `app/reporting/pdf_report.py`      — A4 PDF report; generate_pdf_report(AuditResult) → bytes
 - `app/routes.py`                    — GET / · POST /upload · GET /download/<job_id>/excel · GET /download/<job_id>/pdf
 - `app/templates/index.html`         — upload UI; posts to /upload, renders findings table
-- `app/static/ntt_data_logo.png`     — NTT DATA company logo served by Flask static handler; displayed in header
+- `app/static/ntt_data_logo.png.png` — NTT DATA company logo (PNG); displayed in UI header
+- `app/static/logo.svg`              — NTT DATA company logo (SVG variant)
 - `tests/test_checks.py`             — 42 pytest unit tests for all 4 validation checks
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
 
@@ -156,10 +157,11 @@ Single-page upload interface served by `GET /`.
 - Zero-findings state renders a "fully compliant" message
 - **Download bar**: appears after a successful audit with Excel (.xlsx) and PDF buttons
   linking to `GET /download/<job_id>/excel` and `/pdf`
-- **Header logo**: NTT DATA logo (`app/static/ntt_data_logo.png`) displayed on a white
-  pill background in the page header, left of the title; embedded as a base64 data URL
-  (read at request time by `index()` in `routes.py`) — no separate HTTP request, immune
-  to Flask static-folder path resolution issues on WSL/Windows
+- **Header logo**: NTT DATA logo displayed on a white pill background in the page header,
+  left of the title; embedded as a base64 data URL (read at request time by `index()` in
+  `routes.py`) — no separate HTTP request, immune to Flask static-folder path resolution
+  issues on WSL/Windows; `_load_logo_src()` tries candidate filenames in order:
+  `ntt_data_logo.png` → `ntt_data_logo.png.png` → `logo.png` → `logo.svg`
 - `GET /` added to `app/routes.py` to serve the template
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 - Static assets live at `app/static/`; Flask serves them at `/static/<filename>`
