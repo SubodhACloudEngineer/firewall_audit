@@ -106,6 +106,9 @@ def check_condition_violations(
     for fw_rule in firewall_rules:
         if not fw_rule.enabled:
             continue
+        if fw_rule.action != "allow":
+            # Deny rules in the rulebase are not audited
+            continue
 
         matching_policies = _find_matching_policies(fw_rule, policy_rules)
         if not matching_policies:
@@ -113,12 +116,15 @@ def check_condition_violations(
 
         for policy in matching_policies:
 
-            # 1. Action mismatch
+            # 1. Action mismatch — FW allows a flow the matrix says should be denied.
+            # Severity comes from the matrix cell wording:
+            #   "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
             if fw_rule.action != policy.action:
+                mismatch_severity = policy.deny_severity or Finding.SEVERITY_CRITICAL
                 findings.append(Finding(
                     rule_name=fw_rule.rule_name,
                     finding_type="CONDITION_VIOLATION",
-                    severity=Finding.SEVERITY_CRITICAL,
+                    severity=mismatch_severity,
                     description=(
                         f"Rule '{fw_rule.rule_name}' action is '{fw_rule.action}' "
                         f"but the matrix requires '{policy.action}' for "

@@ -17,6 +17,9 @@ class PolicyRule:
     action: str                      # "allow" or "deny"
     description: Optional[str] = None
     conditions: Optional[str] = None # free-text notes from matrix
+    # Severity of a violation when a FW rule permits this denied flow:
+    # "HIGH" for "Should not be allowed", "CRITICAL" for "Shall not be allowed"
+    deny_severity: Optional[str] = None
 
 
 @dataclass

@@ -73,12 +73,16 @@ def _is_zone_name(value) -> bool:
 _FOOTNOTE_RE = re.compile(r"[\u00b9\u00b2\u00b3\u00b0\d]+\s*$")
 
 
-def _parse_cell_action(cell) -> Optional[str]:
+def _parse_cell_policy(cell) -> Optional[tuple]:
     """
-    Interpret a policy matrix cell value as 'allow', 'deny', or None (skip).
+    Interpret a policy matrix cell value.
 
-    None is returned for empty cells, diagonal (same-zone) cells, and
-    'Out of scope' entries.
+    Returns (action, deny_severity) or None (skip).
+      - "May be allowed" / similar  → ("allow", None)
+      - "Should not be allowed"     → ("deny", "HIGH")    — conditional prohibition
+      - "Shall not be allowed"      → ("deny", "CRITICAL") — absolute prohibition
+      - "Direct access shall not…"  → ("deny", "CRITICAL")
+      - Empty / "Out of scope" / diagonal → None (skip)
     """
     if cell is None:
         return None
@@ -92,17 +96,15 @@ def _parse_cell_action(cell) -> Optional[str]:
 
     # Allow patterns
     if "may be allowed" in text:
-        return "allow"
+        return ("allow", None)
     if "allowed" in text and "not" not in text:
-        return "allow"
+        return ("allow", None)
 
-    # Deny patterns
-    if "shall not be allowed" in text:
-        return "deny"
+    # Deny patterns — "shall" (absolute) takes precedence over "should" (conditional)
+    if "shall not be allowed" in text or "direct access shall not be allowed" in text:
+        return ("deny", "CRITICAL")
     if "should not be allowed" in text:
-        return "deny"
-    if "direct access shall not be allowed" in text:
-        return "deny"
+        return ("deny", "HIGH")
 
     logger.debug(f"Unrecognized matrix cell text (skipped): '{cell}'")
     return None
@@ -156,9 +158,10 @@ def _parse_grid_sheet(df: pd.DataFrame) -> List[PolicyRule]:
         for col_idx, dest_zone in dest_cols:
             if col_idx >= len(row):
                 continue
-            action = _parse_cell_action(row[col_idx])
-            if action is None:
+            result = _parse_cell_policy(row[col_idx])
+            if result is None:
                 continue
+            action, deny_severity = result
             rules.append(PolicyRule(
                 source_zone=source_zone,
                 dest_zone=dest_zone,
@@ -167,6 +170,7 @@ def _parse_grid_sheet(df: pd.DataFrame) -> List[PolicyRule]:
                 required_profiles={},
                 logging_required=True,
                 action=action,
+                deny_severity=deny_severity,
                 description=str(row[col_idx]).strip(),
             ))
 
