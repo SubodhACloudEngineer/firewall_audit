@@ -339,9 +339,11 @@
 <body>
 
 <header>
-  <img src="{{ url_for('static', filename='ntt_data_logo.png') }}"
+  {% if logo_b64 %}
+  <img src="data:image/png;base64,{{ logo_b64 }}"
        alt="NTT DATA" class="header-logo" />
   <div class="header-divider"></div>
+  {% endif %}
   <h1>&#x1F6E1; Firewall Compliance Audit</h1>
   <span class="badge">Palo Alto</span>
 </header>

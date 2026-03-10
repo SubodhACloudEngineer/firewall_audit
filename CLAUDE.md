@@ -157,7 +157,9 @@ Single-page upload interface served by `GET /`.
 - **Download bar**: appears after a successful audit with Excel (.xlsx) and PDF buttons
   linking to `GET /download/<job_id>/excel` and `/pdf`
 - **Header logo**: NTT DATA logo (`app/static/ntt_data_logo.png`) displayed on a white
-  pill background in the page header, left of the title; served via `url_for('static', ...)`
+  pill background in the page header, left of the title; embedded as a base64 data URL
+  (read at request time by `index()` in `routes.py`) — no separate HTTP request, immune
+  to Flask static-folder path resolution issues on WSL/Windows
 - `GET /` added to `app/routes.py` to serve the template
 - Template lives at `app/templates/index.html` (Flask resolves templates relative to the `app/` package root)
 - Static assets live at `app/static/`; Flask serves them at `/static/<filename>`
