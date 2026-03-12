@@ -59,12 +59,28 @@ def _canonical_zone(name: str) -> str:
 
 
 def _is_zone_name(value) -> bool:
-    """Return True if value looks like a known zone name."""
+    """Return True if value looks like a known zone name (used for header-row detection)."""
     if value is None:
         return False
     if isinstance(value, float) and pd.isna(value):
         return False
     return _canonical_zone(str(value)) in _KNOWN_ZONES
+
+
+def _is_zone_cell(value) -> bool:
+    """
+    Return True for any non-empty, non-NaN cell value.
+
+    Used when collecting zone names from the grid header row and source-zone
+    column.  Unlike _is_zone_name, this does NOT require the name to appear in
+    ZONE_ALIASES — the matrix may contain custom sub-zones such as
+    "OT DMZ Access" or "OT DMZ Other" that are not in the alias table.
+    """
+    if value is None:
+        return False
+    if isinstance(value, float) and pd.isna(value):
+        return False
+    return bool(str(value).strip())
 
 
 # ─── Cell text → action ───────────────────────────────────────────────────────
@@ -138,10 +154,16 @@ def _parse_grid_sheet(df: pd.DataFrame) -> List[PolicyRule]:
     if header_row is None:
         return []
 
-    # Build list of (col_index, canonical_dest_zone)
+    # Build list of (col_index, canonical_dest_zone).
+    # Skip col 0 — it is the corner/label cell (e.g. "To → / From ↓");
+    # destination zone names start from col 1.
+    # Use _is_zone_cell (not _is_zone_name) so that sub-zones like
+    # "OT DMZ Access" that are absent from ZONE_ALIASES are still captured.
     dest_cols: List[tuple[int, str]] = []
     for col_idx, val in enumerate(df.iloc[header_row].tolist()):
-        if _is_zone_name(val):
+        if col_idx == 0:
+            continue
+        if _is_zone_cell(val):
             dest_cols.append((col_idx, _canonical_zone(str(val))))
 
     if not dest_cols:
@@ -151,7 +173,9 @@ def _parse_grid_sheet(df: pd.DataFrame) -> List[PolicyRule]:
     for row_idx in range(header_row + 1, len(df)):
         row = df.iloc[row_idx].tolist()
         src_raw = row[0] if row else None
-        if not _is_zone_name(src_raw):
+        # Use _is_zone_cell so that sub-zones absent from ZONE_ALIASES
+        # (e.g. "OT DMZ Access", "OT DMZ Other") are not silently skipped.
+        if not _is_zone_cell(src_raw):
             continue
         source_zone = _canonical_zone(str(src_raw))
 
