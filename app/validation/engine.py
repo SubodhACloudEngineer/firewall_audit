@@ -61,8 +61,43 @@ def run_audit(
 
     all_findings: List[Finding] = []
 
-    all_findings.extend(check_unauthorized_flows(allow_rules, policy_rules))
-    all_findings.extend(check_condition_violations(allow_rules, policy_rules))
+    # ── Pre-check: any-zone rules are immediately CRITICAL ──────────────────
+    # If either the source or destination zone is "any", the rule creates
+    # unrestricted lateral paths that are never sanctioned by the policy matrix
+    # ("Shall not be allowed"). Flag each such rule as CRITICAL right away and
+    # exclude it from checks 1–3 so subsequent checks only see well-scoped rules.
+    clean_rules: List[FirewallRule] = []
+    for rule in allow_rules:
+        if "any" in rule.source_zones or "any" in rule.dest_zones:
+            which_zones = []
+            if "any" in rule.source_zones:
+                which_zones.append("source zone")
+            if "any" in rule.dest_zones:
+                which_zones.append("destination zone")
+            zone_desc = " and ".join(which_zones)
+            all_findings.append(Finding(
+                rule_name=rule.rule_name,
+                finding_type="HYGIENE_ANY_ANY_PERMIT",
+                severity=Finding.SEVERITY_CRITICAL,
+                description=(
+                    f"Rule '{rule.rule_name}' uses 'any' in the {zone_desc}. "
+                    f"This falls under 'Shall not be allowed' and is overly permissive."
+                ),
+                details={"rule_index": rule.rule_index, "any_in_zones": which_zones},
+                remediation=(
+                    f"Replace 'any' in the {zone_desc} with specific zone names "
+                    f"that match the policy matrix."
+                ),
+            ))
+        else:
+            clean_rules.append(rule)
+
+    # Checks 1 & 2 run only on clean rules (no "any" zones).
+    # Check 3 uses all allow_rules — an any-zone rule does provide coverage for
+    # missing-implementation purposes even though it is itself a violation.
+    # Hygiene runs on all allow_rules for disabled / shadowed detection.
+    all_findings.extend(check_unauthorized_flows(clean_rules, policy_rules))
+    all_findings.extend(check_condition_violations(clean_rules, policy_rules))
     all_findings.extend(check_missing_implementations(allow_rules, policy_rules))
     all_findings.extend(check_hygiene(allow_rules))
 
