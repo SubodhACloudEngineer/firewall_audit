@@ -5,7 +5,7 @@ Each returns a list of Finding objects.
 """
 
 import logging
-from typing import List
+from typing import List, Tuple
 
 from app.models import PolicyRule, FirewallRule, Finding
 
@@ -16,25 +16,39 @@ logger = logging.getLogger(__name__)
 # HELPERS
 # ─────────────────────────────────────────────────────────────
 
+def expand_zone_pairs(source_zones: set, dest_zones: set) -> List[Tuple[str, str]]:
+    """
+    Return the Cartesian product of source and destination zones.
+
+    A rule with source=[A, B] and dest=[X, Y] expands to:
+      [(A, X), (A, Y), (B, X), (B, Y)]
+
+    Each pair is evaluated independently by check_unauthorized_flows and
+    check_condition_violations so that a single rule covering multiple zones
+    cannot hide an unauthorized or misconfigured (src, dst) combination.
+    """
+    return [(src, dst) for src in sorted(source_zones) for dst in sorted(dest_zones)]
+
+
+def _pair_matches_policy(src: str, dst: str, policy: PolicyRule) -> bool:
+    """
+    Check if a specific (src, dst) zone pair matches a policy rule.
+    'any' on the firewall side acts as a wildcard covering all policy zones.
+    """
+    src_match = src == "any" or src == policy.source_zone
+    dst_match = dst == "any" or dst == policy.dest_zone
+    return src_match and dst_match
+
+
 def _zones_match(fw_src: set, fw_dst: set, policy: PolicyRule) -> bool:
     """
-    Check if a firewall rule's zone pair overlaps with a policy rule's zone pair.
+    Check if a firewall rule's zone sets overlap with a policy rule's zone pair.
     Handles 'any' wildcard on the firewall rule side.
+    Used by check_missing_implementations which iterates over policies.
     """
     src_match = "any" in fw_src or policy.source_zone in fw_src
     dst_match = "any" in fw_dst or policy.dest_zone in fw_dst
     return src_match and dst_match
-
-
-def _find_matching_policies(
-    fw_rule: FirewallRule,
-    policy_rules: List[PolicyRule],
-) -> List[PolicyRule]:
-    """Return all policy rules whose zone pair overlaps with this firewall rule."""
-    return [
-        p for p in policy_rules
-        if _zones_match(fw_rule.source_zones, fw_rule.dest_zones, p)
-    ]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -47,9 +61,14 @@ def check_unauthorized_flows(
     policy_rules: List[PolicyRule],
 ) -> List[Finding]:
     """
-    Flag any firewall rule whose source→dest zone combination
-    has no entry in the security policy matrix.
-    Only flags ALLOW rules — deny rules for unlisted flows are expected.
+    For each (src, dst) pair produced by Cartesian expansion of a firewall
+    allow rule's zones, flag any pair that has no matching entry in the
+    security policy matrix.
+
+    Multi-zone rules are fully expanded so that a single rule covering zones
+    [A, B] → [X, Y] is evaluated as four independent pairs. Only authorized
+    pairs (those present in the matrix) are exempt; each unauthorized pair
+    generates its own CRITICAL finding.
     """
     findings = []
     for fw_rule in firewall_rules:
@@ -57,29 +76,31 @@ def check_unauthorized_flows(
             continue
         if fw_rule.action != "allow":
             continue
-        matching = _find_matching_policies(fw_rule, policy_rules)
-        if not matching:
-            findings.append(Finding(
-                rule_name=fw_rule.rule_name,
-                finding_type="UNAUTHORIZED_FLOW",
-                severity=Finding.SEVERITY_CRITICAL,
-                description=(
-                    f"Rule '{fw_rule.rule_name}' permits traffic from zone(s) "
-                    f"{fw_rule.source_zones} to {fw_rule.dest_zones}, but this "
-                    f"zone pair has no entry in the Security Policy Matrix."
-                ),
-                details={
-                    "source_zones": list(fw_rule.source_zones),
-                    "dest_zones":   list(fw_rule.dest_zones),
-                    "services":     list(fw_rule.services),
-                    "rule_index":   fw_rule.rule_index,
-                },
-                remediation=(
-                    "Review whether this traffic flow should be authorized. "
-                    "If legitimate, add it to the Security Policy Matrix. "
-                    "If not, remove or disable the rule."
-                ),
-            ))
+        for src, dst in expand_zone_pairs(fw_rule.source_zones, fw_rule.dest_zones):
+            if not any(_pair_matches_policy(src, dst, p) for p in policy_rules):
+                findings.append(Finding(
+                    rule_name=fw_rule.rule_name,
+                    finding_type="UNAUTHORIZED_FLOW",
+                    severity=Finding.SEVERITY_CRITICAL,
+                    description=(
+                        f"Rule '{fw_rule.rule_name}' permits traffic from zone '{src}' "
+                        f"to '{dst}', but this zone pair has no entry in the "
+                        f"Security Policy Matrix."
+                    ),
+                    details={
+                        "source_zone":  src,
+                        "dest_zone":    dst,
+                        "source_zones": list(fw_rule.source_zones),
+                        "dest_zones":   list(fw_rule.dest_zones),
+                        "services":     list(fw_rule.services),
+                        "rule_index":   fw_rule.rule_index,
+                    },
+                    remediation=(
+                        "Review whether this traffic flow should be authorized. "
+                        "If legitimate, add it to the Security Policy Matrix. "
+                        "If not, remove or disable the rule."
+                    ),
+                ))
     logger.info(f"Unauthorized flow check: {len(findings)} findings")
     return findings
 
@@ -94,12 +115,16 @@ def check_condition_violations(
     policy_rules: List[PolicyRule],
 ) -> List[Finding]:
     """
-    For each firewall rule that matches a policy zone pair, verify:
+    For each (src, dst) pair produced by Cartesian expansion of a firewall
+    allow rule's zones, find matching policies and verify:
       - Action matches the policy
       - Ports are within the allowed set (if matrix restricts ports)
       - AV profile is applied if required
       - URL profile is applied if required
       - Logging is enabled if required
+
+    Each pair is evaluated independently so that condition violations for one
+    (src, dst) combination do not suppress findings for another.
     """
     findings = []
 
@@ -110,94 +135,97 @@ def check_condition_violations(
             # Deny rules in the rulebase are not audited
             continue
 
-        matching_policies = _find_matching_policies(fw_rule, policy_rules)
-        if not matching_policies:
-            continue  # Handled by unauthorized flow check
+        for src, dst in expand_zone_pairs(fw_rule.source_zones, fw_rule.dest_zones):
+            matching_policies = [
+                p for p in policy_rules if _pair_matches_policy(src, dst, p)
+            ]
+            if not matching_policies:
+                continue  # Handled by unauthorized flow check
 
-        for policy in matching_policies:
+            for policy in matching_policies:
 
-            # 1. Action mismatch — FW allows a flow the matrix says should be denied.
-            # Severity comes from the matrix cell wording:
-            #   "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
-            if fw_rule.action != policy.action:
-                mismatch_severity = policy.deny_severity or Finding.SEVERITY_CRITICAL
-                findings.append(Finding(
-                    rule_name=fw_rule.rule_name,
-                    finding_type="CONDITION_VIOLATION",
-                    severity=mismatch_severity,
-                    description=(
-                        f"Rule '{fw_rule.rule_name}' action is '{fw_rule.action}' "
-                        f"but the matrix requires '{policy.action}' for "
-                        f"{policy.source_zone}→{policy.dest_zone}."
-                    ),
-                    details={"expected_action": policy.action, "actual_action": fw_rule.action},
-                    remediation=f"Change rule action to '{policy.action}' or update the matrix.",
-                ))
+                # 1. Action mismatch — FW allows a flow the matrix says should be denied.
+                # Severity comes from the matrix cell wording:
+                #   "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
+                if fw_rule.action != policy.action:
+                    mismatch_severity = policy.deny_severity or Finding.SEVERITY_CRITICAL
+                    findings.append(Finding(
+                        rule_name=fw_rule.rule_name,
+                        finding_type="CONDITION_VIOLATION",
+                        severity=mismatch_severity,
+                        description=(
+                            f"Rule '{fw_rule.rule_name}' action is '{fw_rule.action}' "
+                            f"but the matrix requires '{policy.action}' for "
+                            f"{policy.source_zone}→{policy.dest_zone}."
+                        ),
+                        details={"expected_action": policy.action, "actual_action": fw_rule.action},
+                        remediation=f"Change rule action to '{policy.action}' or update the matrix.",
+                    ))
 
-            # 2. Port violation (only if matrix specifies non-any ports)
-            if "any" not in policy.allowed_ports:
-                disallowed_ports = fw_rule.services - policy.allowed_ports - {"any", "app-default"}
-                if disallowed_ports:
+                # 2. Port violation (only if matrix specifies non-any ports)
+                if "any" not in policy.allowed_ports:
+                    disallowed_ports = fw_rule.services - policy.allowed_ports - {"any", "app-default"}
+                    if disallowed_ports:
+                        findings.append(Finding(
+                            rule_name=fw_rule.rule_name,
+                            finding_type="CONDITION_VIOLATION",
+                            severity=Finding.SEVERITY_HIGH,
+                            description=(
+                                f"Rule '{fw_rule.rule_name}' allows services {disallowed_ports} "
+                                f"which are not authorized by the matrix for "
+                                f"{policy.source_zone}→{policy.dest_zone} "
+                                f"(allowed: {policy.allowed_ports})."
+                            ),
+                            details={
+                                "disallowed_services": list(disallowed_ports),
+                                "allowed_ports":       list(policy.allowed_ports),
+                            },
+                            remediation="Restrict the rule's services to match the policy matrix.",
+                        ))
+
+                # 3. Missing AV profile
+                required_av = policy.required_profiles.get("av")
+                if required_av and not fw_rule.av_profile and not fw_rule.security_profile_group:
                     findings.append(Finding(
                         rule_name=fw_rule.rule_name,
                         finding_type="CONDITION_VIOLATION",
                         severity=Finding.SEVERITY_HIGH,
                         description=(
-                            f"Rule '{fw_rule.rule_name}' allows services {disallowed_ports} "
-                            f"which are not authorized by the matrix for "
-                            f"{policy.source_zone}→{policy.dest_zone} "
-                            f"(allowed: {policy.allowed_ports})."
+                            f"Rule '{fw_rule.rule_name}' is missing the required AV profile "
+                            f"'{required_av}' for {policy.source_zone}→{policy.dest_zone}."
                         ),
-                        details={
-                            "disallowed_services": list(disallowed_ports),
-                            "allowed_ports":       list(policy.allowed_ports),
-                        },
-                        remediation="Restrict the rule's services to match the policy matrix.",
+                        details={"required_av_profile": required_av},
+                        remediation=f"Apply AV profile '{required_av}' or a security profile group to the rule.",
                     ))
 
-            # 3. Missing AV profile
-            required_av = policy.required_profiles.get("av")
-            if required_av and not fw_rule.av_profile and not fw_rule.security_profile_group:
-                findings.append(Finding(
-                    rule_name=fw_rule.rule_name,
-                    finding_type="CONDITION_VIOLATION",
-                    severity=Finding.SEVERITY_HIGH,
-                    description=(
-                        f"Rule '{fw_rule.rule_name}' is missing the required AV profile "
-                        f"'{required_av}' for {policy.source_zone}→{policy.dest_zone}."
-                    ),
-                    details={"required_av_profile": required_av},
-                    remediation=f"Apply AV profile '{required_av}' or a security profile group to the rule.",
-                ))
+                # 4. Missing URL profile
+                required_url = policy.required_profiles.get("url")
+                if required_url and not fw_rule.url_profile and not fw_rule.security_profile_group:
+                    findings.append(Finding(
+                        rule_name=fw_rule.rule_name,
+                        finding_type="CONDITION_VIOLATION",
+                        severity=Finding.SEVERITY_HIGH,
+                        description=(
+                            f"Rule '{fw_rule.rule_name}' is missing the required URL profile "
+                            f"'{required_url}' for {policy.source_zone}→{policy.dest_zone}."
+                        ),
+                        details={"required_url_profile": required_url},
+                        remediation=f"Apply URL filtering profile '{required_url}' to the rule.",
+                    ))
 
-            # 4. Missing URL profile
-            required_url = policy.required_profiles.get("url")
-            if required_url and not fw_rule.url_profile and not fw_rule.security_profile_group:
-                findings.append(Finding(
-                    rule_name=fw_rule.rule_name,
-                    finding_type="CONDITION_VIOLATION",
-                    severity=Finding.SEVERITY_HIGH,
-                    description=(
-                        f"Rule '{fw_rule.rule_name}' is missing the required URL profile "
-                        f"'{required_url}' for {policy.source_zone}→{policy.dest_zone}."
-                    ),
-                    details={"required_url_profile": required_url},
-                    remediation=f"Apply URL filtering profile '{required_url}' to the rule.",
-                ))
-
-            # 5. Logging not enabled when required
-            if policy.logging_required and not fw_rule.log_at_session_end and not fw_rule.log_forwarding:
-                findings.append(Finding(
-                    rule_name=fw_rule.rule_name,
-                    finding_type="CONDITION_VIOLATION",
-                    severity=Finding.SEVERITY_MEDIUM,
-                    description=(
-                        f"Rule '{fw_rule.rule_name}' does not have logging enabled, "
-                        f"but the matrix requires logging for {policy.source_zone}→{policy.dest_zone}."
-                    ),
-                    details={"logging_required": True},
-                    remediation="Enable 'Log At Session End' or configure a Log Forwarding profile.",
-                ))
+                # 5. Logging not enabled when required
+                if policy.logging_required and not fw_rule.log_at_session_end and not fw_rule.log_forwarding:
+                    findings.append(Finding(
+                        rule_name=fw_rule.rule_name,
+                        finding_type="CONDITION_VIOLATION",
+                        severity=Finding.SEVERITY_MEDIUM,
+                        description=(
+                            f"Rule '{fw_rule.rule_name}' does not have logging enabled, "
+                            f"but the matrix requires logging for {policy.source_zone}→{policy.dest_zone}."
+                        ),
+                        details={"logging_required": True},
+                        remediation="Enable 'Log At Session End' or configure a Log Forwarding profile.",
+                    ))
 
     logger.info(f"Condition violation check: {len(findings)} findings")
     return findings
@@ -250,15 +278,19 @@ def check_missing_implementations(
 
 # ─────────────────────────────────────────────────────────────
 # CHECK 4: HYGIENE
-# Disabled rules, any-any permits, shadowed rules
+# Disabled rules and shadowed rules
 # ─────────────────────────────────────────────────────────────
 
 def check_hygiene(firewall_rules: List[FirewallRule]) -> List[Finding]:
     """
     Hygiene checks — not policy violations but security/operational risks:
       - Disabled rules still present (stale config)
-      - Any-Any permit rules (overly permissive)
       - Rules shadowed by a broader rule above them
+
+    Note: any-zone permit detection ("any" in source or destination zone) is
+    handled by the validation engine as a pre-check step *before* this function
+    is called (see engine.py run_audit). Rules with "any" zones receive an
+    immediate CRITICAL finding there and are not re-checked here.
     """
     findings = []
 
@@ -278,33 +310,6 @@ def check_hygiene(firewall_rules: List[FirewallRule]) -> List[Finding]:
                 remediation="Remove disabled rules that are no longer needed.",
             ))
             continue
-
-        # Any-zone permit — "any" in source or destination zone falls under
-        # "Shall not be allowed" (CRITICAL) because it creates unrestricted
-        # lateral paths that are never sanctioned by the policy matrix.
-        src_any = fw_rule.action == "allow" and "any" in fw_rule.source_zones
-        dst_any = fw_rule.action == "allow" and "any" in fw_rule.dest_zones
-        if src_any or dst_any:
-            which_zones = []
-            if src_any:
-                which_zones.append("source zone")
-            if dst_any:
-                which_zones.append("destination zone")
-            zone_desc = " and ".join(which_zones)
-            findings.append(Finding(
-                rule_name=fw_rule.rule_name,
-                finding_type="HYGIENE_ANY_ANY_PERMIT",
-                severity=Finding.SEVERITY_CRITICAL,
-                description=(
-                    f"Rule '{fw_rule.rule_name}' uses 'any' in the {zone_desc}. "
-                    f"This falls under 'Shall not be allowed' and is overly permissive."
-                ),
-                details={"rule_index": fw_rule.rule_index, "any_in_zones": which_zones},
-                remediation=(
-                    f"Replace 'any' in the {zone_desc} with specific zone names "
-                    f"that match the policy matrix."
-                ),
-            ))
 
     # Shadowed rules — a rule is shadowed if an identical or broader rule appears before it
     enabled_rules = [r for r in firewall_rules if r.enabled]

@@ -10,7 +10,9 @@ from app.validation.checks import (
     check_condition_violations,
     check_missing_implementations,
     check_hygiene,
+    expand_zone_pairs,
 )
+from app.validation.engine import run_audit
 
 
 # ─────────────────────────────────────────────────────────────
@@ -133,6 +135,29 @@ class TestCheckUnauthorizedFlows:
 
     def test_empty_inputs_produce_no_findings(self):
         assert check_unauthorized_flows([], []) == []
+
+    def test_cartesian_expansion_partial_unauthorized(self):
+        # 2 src × 2 dst = 4 pairs; 3 are in the matrix, 1 is not.
+        policies = [
+            make_policy(source_zone="zone-a", dest_zone="zone-x"),
+            make_policy(source_zone="zone-a", dest_zone="zone-y"),
+            make_policy(source_zone="zone-b", dest_zone="zone-x"),
+            # zone-b → zone-y intentionally absent
+        ]
+        fw_rule = make_fw_rule(source_zones={"zone-a", "zone-b"}, dest_zones={"zone-x", "zone-y"})
+        findings = check_unauthorized_flows([fw_rule], policies)
+        assert len(findings) == 1
+        assert findings[0].finding_type == "UNAUTHORIZED_FLOW"
+        assert "zone-b" in findings[0].description
+        assert "zone-y" in findings[0].description
+
+    def test_cartesian_expansion_all_pairs_unauthorized(self):
+        # No matching policy at all — should get one finding per pair (2×2 = 4).
+        fw_rule = make_fw_rule(source_zones={"a", "b"}, dest_zones={"x", "y"})
+        findings = check_unauthorized_flows([fw_rule], [])
+        assert len(findings) == 4
+        assert all(f.finding_type == "UNAUTHORIZED_FLOW" for f in findings)
+        assert all(f.severity == Finding.SEVERITY_CRITICAL for f in findings)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -279,6 +304,19 @@ class TestCheckConditionViolations:
         findings = check_condition_violations([fw_rule], [policy])
         assert findings == []
 
+    def test_cartesian_expansion_condition_checked_per_pair(self):
+        # FW rule covers two src zones; only one pair matches a deny policy.
+        # The other pair matches an allow policy and is compliant.
+        allow_policy = make_policy(source_zone="trust",   dest_zone="untrust", action="allow")
+        deny_policy  = make_policy(source_zone="dmz",     dest_zone="untrust", action="deny",
+                                   deny_severity=Finding.SEVERITY_HIGH)
+        fw_rule = make_fw_rule(source_zones={"trust", "dmz"}, dest_zones={"untrust"})
+        findings = check_condition_violations([fw_rule], [allow_policy, deny_policy])
+        action_findings = [f for f in findings if "action" in f.description.lower()]
+        # Only the dmz→untrust pair violates the deny policy
+        assert len(action_findings) == 1
+        assert action_findings[0].severity == Finding.SEVERITY_HIGH
+
 
 # ─────────────────────────────────────────────────────────────
 # CHECK 3: MISSING IMPLEMENTATION
@@ -361,7 +399,9 @@ class TestCheckHygiene:
         assert f.severity == Finding.SEVERITY_LOW
         assert f.rule_name == "stale-rule"
 
-    def test_any_any_permit_flagged_as_critical(self):
+    def test_hygiene_does_not_emit_any_zone_permit_finding(self):
+        # any-zone detection is the engine's responsibility; check_hygiene
+        # must not emit HYGIENE_ANY_ANY_PERMIT findings.
         fw_rule = make_fw_rule(
             rule_name="allow-all",
             source_zones={"any"},
@@ -370,46 +410,7 @@ class TestCheckHygiene:
             action="allow",
         )
         findings = check_hygiene([fw_rule])
-        any_any = [f for f in findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
-        assert len(any_any) == 1
-        assert any_any[0].severity == Finding.SEVERITY_CRITICAL
-
-    def test_any_any_deny_not_flagged(self):
-        fw_rule = make_fw_rule(
-            source_zones={"any"}, dest_zones={"any"}, services={"any"}, action="deny"
-        )
-        findings = check_hygiene([fw_rule])
         assert not any(f.finding_type == "HYGIENE_ANY_ANY_PERMIT" for f in findings)
-
-    def test_any_source_zone_flagged_as_critical(self):
-        # "any" in source zone only is still Shall-not-be-allowed → CRITICAL
-        fw_rule = make_fw_rule(
-            rule_name="any-src",
-            source_zones={"any"},
-            dest_zones={"untrust"},
-            services={"443"},
-            action="allow",
-        )
-        findings = check_hygiene([fw_rule])
-        any_findings = [f for f in findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
-        assert len(any_findings) == 1
-        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
-        assert "source zone" in any_findings[0].description
-
-    def test_any_dest_zone_flagged_as_critical(self):
-        # "any" in destination zone only is still Shall-not-be-allowed → CRITICAL
-        fw_rule = make_fw_rule(
-            rule_name="any-dst",
-            source_zones={"trust"},
-            dest_zones={"any"},
-            services={"443"},
-            action="allow",
-        )
-        findings = check_hygiene([fw_rule])
-        any_findings = [f for f in findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
-        assert len(any_findings) == 1
-        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
-        assert "destination zone" in any_findings[0].description
 
     def test_shadowed_rule_flagged(self):
         # Rule A: any→any allow all services — broad
@@ -523,3 +524,75 @@ class TestCheckHygiene:
                            and f.rule_name == "rule-c"]
         assert len(shadow_findings) == 1
         assert shadow_findings[0].details["shadowed_by"] == "rule-a"
+
+
+# ─────────────────────────────────────────────────────────────
+# HELPER: expand_zone_pairs
+# ─────────────────────────────────────────────────────────────
+
+class TestExpandZonePairs:
+
+    def test_single_zone_each_side(self):
+        result = expand_zone_pairs({"a"}, {"x"})
+        assert result == [("a", "x")]
+
+    def test_two_by_two_produces_four_pairs(self):
+        result = expand_zone_pairs({"a", "b"}, {"x", "y"})
+        assert len(result) == 4
+        assert set(result) == {("a", "x"), ("a", "y"), ("b", "x"), ("b", "y")}
+
+    def test_empty_source_produces_no_pairs(self):
+        assert expand_zone_pairs(set(), {"x"}) == []
+
+    def test_empty_dest_produces_no_pairs(self):
+        assert expand_zone_pairs({"a"}, set()) == []
+
+
+# ─────────────────────────────────────────────────────────────
+# ENGINE PRE-CHECK: any-zone → immediate CRITICAL
+# ─────────────────────────────────────────────────────────────
+
+class TestAnyZonePreCheck:
+    """
+    The validation engine must detect 'any' in source or destination zones
+    before running the 4 checks, emit a CRITICAL HYGIENE_ANY_ANY_PERMIT finding,
+    and exclude the rule from unauthorized-flow / condition-violation checks.
+    """
+
+    def test_any_source_zone_flagged_critical_by_engine(self):
+        policy  = make_policy(source_zone="trust", dest_zone="untrust")
+        fw_rule = make_fw_rule(rule_name="any-src", source_zones={"any"}, dest_zones={"untrust"})
+        result  = run_audit([policy], [fw_rule])
+        any_findings = [f for f in result.findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
+        assert len(any_findings) == 1
+        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
+        assert "source zone" in any_findings[0].description
+
+    def test_any_dest_zone_flagged_critical_by_engine(self):
+        policy  = make_policy(source_zone="trust", dest_zone="untrust")
+        fw_rule = make_fw_rule(rule_name="any-dst", source_zones={"trust"}, dest_zones={"any"})
+        result  = run_audit([policy], [fw_rule])
+        any_findings = [f for f in result.findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
+        assert len(any_findings) == 1
+        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
+        assert "destination zone" in any_findings[0].description
+
+    def test_any_any_permit_flagged_critical_by_engine(self):
+        fw_rule = make_fw_rule(rule_name="allow-all", source_zones={"any"}, dest_zones={"any"})
+        result  = run_audit([], [fw_rule])
+        any_findings = [f for f in result.findings if f.finding_type == "HYGIENE_ANY_ANY_PERMIT"]
+        assert len(any_findings) == 1
+        assert any_findings[0].severity == Finding.SEVERITY_CRITICAL
+
+    def test_deny_rule_with_any_zones_not_flagged(self):
+        # Deny rules are discarded before the pre-check; no HYGIENE_ANY_ANY_PERMIT.
+        fw_rule = make_fw_rule(source_zones={"any"}, dest_zones={"any"}, action="deny")
+        result  = run_audit([], [fw_rule])
+        assert not any(f.finding_type == "HYGIENE_ANY_ANY_PERMIT" for f in result.findings)
+
+    def test_any_zone_rule_excluded_from_unauthorized_flow_check(self):
+        # An any-zone rule should NOT also produce an UNAUTHORIZED_FLOW finding.
+        fw_rule = make_fw_rule(rule_name="any-src", source_zones={"any"}, dest_zones={"untrust"})
+        result  = run_audit([], [fw_rule])
+        assert not any(f.finding_type == "UNAUTHORIZED_FLOW" for f in result.findings)
+        assert any(f.finding_type == "HYGIENE_ANY_ANY_PERMIT" for f in result.findings)

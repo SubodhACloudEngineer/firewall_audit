@@ -19,8 +19,11 @@ Upload (xlsx + csv)
 - `app/ingestion/rulebase_parser.py` — parses Palo Alto CSV rulebase → FirewallRule objects
 - `app/ingestion/normalizer.py`      — aligns both models to common schema; translates raw FW zone names → ATPSG zones via zone_map
 - `app/models/__init__.py`           — PolicyRule, FirewallRule, Finding dataclasses
-- `app/validation/checks.py`         — 4 check functions (unauthorized, condition, missing, hygiene)
-- `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult
+- `app/validation/checks.py`         — 4 check functions (unauthorized, condition, missing, hygiene);
+                                       `expand_zone_pairs(src_zones, dst_zones)` Cartesian helper;
+                                       `_pair_matches_policy(src, dst, policy)` single-pair matcher
+- `app/validation/engine.py`         — orchestrates checks, scores, returns AuditResult;
+                                       any-zone pre-check emits CRITICAL before checks 1–3
 - `app/reporting/excel_report.py`    — color-coded Excel report; generate_excel_report(AuditResult) → bytes
 - `app/reporting/pdf_report.py`      — A4 PDF report; generate_pdf_report(AuditResult) → bytes
 - `app/routes.py`                    — GET / · POST /upload · GET /download/<job_id>/excel · GET /download/<job_id>/pdf
@@ -41,12 +44,26 @@ Upload (xlsx + csv)
 
 Firewall rules with `action="deny"` are discarded before all checks — only `allow` rules are audited.
 
-1. UNAUTHORIZED_FLOW    — firewall allow rule with no matching matrix entry (CRITICAL)
-2. CONDITION_VIOLATION  — wrong ports / missing profiles / no logging (HIGH/MEDIUM);
+### Engine Pre-Check — Any-Zone Detection (CHANGE 1)
+Before the four checks run, `run_audit()` in `engine.py` scans every allow rule.
+If **either** `source_zones` or `dest_zones` contains `"any"`, the rule is immediately
+flagged as **CRITICAL** (`HYGIENE_ANY_ANY_PERMIT`) and excluded from checks 1 and 2.
+Deny rules are discarded before this step and are never flagged.
+
+### Multi-Zone Cartesian Expansion (CHANGE 2)
+Checks 1 and 2 call `expand_zone_pairs(source_zones, dest_zones)` to produce the full
+Cartesian product of zone sets before evaluation. A rule with `source=[A, B]` and
+`dest=[X, Y]` is evaluated as four independent `(src, dst)` pairs:
+`(A,X)`, `(A,Y)`, `(B,X)`, `(B,Y)`. Each unauthorized or misconfigured pair generates
+its own finding, so a single multi-zone rule cannot hide a violation.
+
+### Check functions
+1. UNAUTHORIZED_FLOW    — per expanded (src, dst) pair, no matching matrix entry (CRITICAL)
+2. CONDITION_VIOLATION  — per expanded (src, dst) pair, wrong ports / missing profiles / no logging (HIGH/MEDIUM);
    action mismatch severity follows the matrix: "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
 3. MISSING_IMPLEMENTATION — allow matrix entry with no firewall rule (MEDIUM)
-4. HYGIENE              — disabled rules, any-zone permit, shadowed rules (LOW/CRITICAL);
-   "any" in source OR destination zone → CRITICAL ("Shall not be allowed"); description names the offending zone(s)
+4. HYGIENE              — disabled rules (LOW), shadowed rules (LOW);
+   any-zone permit detection moved to engine pre-check (see above)
 
 ## Dev Setup
 ```bash
@@ -168,13 +185,16 @@ Single-page upload interface served by `GET /`.
 - `static_folder` is set to an explicit absolute path in `create_app()` (`Path(__file__).resolve().parent / "static"`) to prevent 404s from WSL/Windows path resolution quirks
 
 ## Tests — tests/test_checks.py
-42 pytest unit tests covering all four check functions (42/42 passing).
+51 pytest unit tests covering all four check functions plus the engine pre-check and
+`expand_zone_pairs` helper (51/51 passing).
 
 | Class | Tests | What's covered |
 |---|---|---|
-| `TestCheckUnauthorizedFlows` | 8 | zone match, no-match (CRITICAL), disabled/deny skip, any-wildcard, multi-rule isolation, empty inputs |
-| `TestCheckConditionViolations` | 15 | compliant baseline, port violation (HIGH), `any`/`app-default` exemptions, missing logging (MEDIUM), log-forwarding as alternative, missing AV/URL profiles (HIGH), profile-group bypass, action mismatch (CRITICAL), "shall not be allowed" → CRITICAL, "should not be allowed" → HIGH, deny FW rule skipped, disabled/unmatched rule skip |
+| `TestCheckUnauthorizedFlows` | 10 | zone match, no-match (CRITICAL), disabled/deny skip, any-wildcard, multi-rule isolation, empty inputs, Cartesian partial-unauthorized (1 of 4 pairs), Cartesian all-unauthorized (4 findings for 2×2) |
+| `TestCheckConditionViolations` | 17 | compliant baseline, port violation (HIGH), `any`/`app-default` exemptions, missing logging (MEDIUM), log-forwarding as alternative, missing AV/URL profiles (HIGH), profile-group bypass, action mismatch (CRITICAL), "shall not be allowed" → CRITICAL, "should not be allowed" → HIGH, deny FW rule skipped, disabled/unmatched rule skip, Cartesian per-pair condition check |
 | `TestCheckMissingImplementations` | 7 | covered flow, uncovered flow (MEDIUM), disabled-rule gap, deny-policy skip, any-zone coverage, multi-policy isolation, empty inputs |
-| `TestCheckHygiene` | 11 | clean rule baseline, disabled (LOW), any-any permit (CRITICAL), any-any deny skip, any-source-zone (CRITICAL), any-dest-zone (CRITICAL), shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
+| `TestCheckHygiene` | 8 | clean rule baseline, disabled (LOW), hygiene does not emit any-zone permit (moved to engine), shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
+| `TestExpandZonePairs` | 4 | single pair, 2×2 product, empty source, empty dest |
+| `TestAnyZonePreCheck` | 5 | any-source CRITICAL via engine, any-dest CRITICAL via engine, any-any CRITICAL via engine, deny-any not flagged, any-zone rule excluded from unauthorized-flow check |
 
 Fixtures `make_policy()` and `make_fw_rule()` provide sensible defaults for minimal test setup.
