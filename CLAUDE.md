@@ -96,7 +96,11 @@ Cell text determines the policy:
 `deny_severity` controls the severity of a CONDITION_VIOLATION finding when a firewall `allow` rule contradicts a matrix `deny` entry.
 
 - Scans first sheet whose name contains "matrix" first, then all other sheets
-- Header row auto-detected by finding a row with ≥ 3 known zone names
+- Header row auto-detected by finding a row with ≥ 3 known zone names (`_find_header_row`)
+- Once the header row is found, **all** non-empty cells in cols 1+ are treated as destination
+  zone names (`_is_zone_cell`), and any non-empty col-0 cell in data rows is a source zone.
+  This ensures sub-zones like "OT DMZ Access" that are absent from `ZONE_ALIASES` are not
+  silently dropped. Col 0 of the header row is always skipped (it is the corner label cell).
 - Zone names normalised via `ZONE_ALIASES`: "OT-DMZ" == "OT DMZ" == "ot dmz"
 - All parsed rules default to `allowed_ports={"any"}`, `logging_required=True`
 
@@ -131,6 +135,7 @@ Zones not present in the map are kept as-is (pass-through).
 - [x] templates/index.html            — upload UI (done 2026-03-05)
 - [x] tests/test_checks.py            — 37 unit tests for all 4 checks (done 2026-03-05)
 - [x] load_zone_assignments column detection bug (fixed 2026-03-10)
+- [x] matrix_parser grid format silently skips sub-zones absent from ZONE_ALIASES (e.g. "OT DMZ Access", "OT DMZ Other") — fixed 2026-03-12 by replacing `_is_zone_name` with `_is_zone_cell` in `_parse_grid_sheet`
 - [x] NTT DATA logo in UI header (done 2026-03-10)
 - [ ] GET /results/<job_id>           — retrieve stored results
 - [x] GET /download/<job_id>/excel    — stream saved .xlsx report (done 2026-03-05)
