@@ -9,7 +9,7 @@ matrix, and generates a compliance report.
 ```
 Upload (xlsx + csv)
   → Ingestion Layer (parse + normalize)
-  → Validation Engine (4 checks)
+  → Validation Engine (5 checks)
   → Scoring
   → Report (Excel + PDF)
 ```
@@ -58,12 +58,21 @@ Cartesian product of zone sets before evaluation. A rule with `source=[A, B]` an
 its own finding, so a single multi-zone rule cannot hide a violation.
 
 ### Check functions
-1. UNAUTHORIZED_FLOW    — per expanded (src, dst) pair, no matching matrix entry (CRITICAL)
-2. CONDITION_VIOLATION  — per expanded (src, dst) pair, wrong ports / missing profiles / no logging (HIGH/MEDIUM);
+1. UNAUTHORIZED_FLOW           — per expanded (src, dst) pair, no matching matrix entry (CRITICAL)
+2. CONDITION_VIOLATION         — per expanded (src, dst) pair, wrong ports / missing profiles / no logging (HIGH/MEDIUM);
    action mismatch severity follows the matrix: "Should not be allowed" → HIGH, "Shall not be allowed" → CRITICAL
-3. MISSING_IMPLEMENTATION — allow matrix entry with no firewall rule (MEDIUM)
-4. HYGIENE              — disabled rules (LOW), shadowed rules (LOW);
+3. MISSING_IMPLEMENTATION      — allow matrix entry with no firewall rule (MEDIUM)
+4. HYGIENE                     — disabled rules (LOW), shadowed rules (LOW);
    any-zone permit detection moved to engine pre-check (see above)
+5. INTRA_ZONE_LATERAL_MOVEMENT — cross-sub-zone traffic within the same canonical ATPSG zone (HIGH).
+   Context: the matrix cell OT Zone → OT Zone states "Within a shop may be allowed; Between shops
+   should not be allowed." After zone normalisation all OT-* raw zones collapse to "ot zone", making
+   the standard Cartesian checks blind to cross-sub-zone flows.  This check re-examines each allow
+   rule using `FirewallRule.raw_source_zones` / `raw_dest_zones` (pre-translation zone names saved
+   by the normalizer) and the `zone_map` passed to `run_audit()`.  Pairs where raw_src == raw_dst
+   (same sub-zone / "same shop") are allowed; pairs where raw_src != raw_dst but both map to the
+   same canonical zone are flagged HIGH.  Requires a non-empty zone_map; no findings if zone_map
+   is absent.
 
 ## Dev Setup
 ```bash
@@ -190,8 +199,8 @@ Single-page upload interface served by `GET /`.
 - `static_folder` is set to an explicit absolute path in `create_app()` (`Path(__file__).resolve().parent / "static"`) to prevent 404s from WSL/Windows path resolution quirks
 
 ## Tests — tests/test_checks.py
-51 pytest unit tests covering all four check functions plus the engine pre-check and
-`expand_zone_pairs` helper (51/51 passing).
+61 pytest unit tests covering all five check functions plus the engine pre-check and
+`expand_zone_pairs` helper (61/61 passing).
 
 | Class | Tests | What's covered |
 |---|---|---|
@@ -201,5 +210,7 @@ Single-page upload interface served by `GET /`.
 | `TestCheckHygiene` | 8 | clean rule baseline, disabled (LOW), hygiene does not emit any-zone permit (moved to engine), shadowed rule (LOW), reversed-order no-shadow, partial-overlap no-shadow, disabled broad rule not shadowing, only first shadower reported |
 | `TestExpandZonePairs` | 4 | single pair, 2×2 product, empty source, empty dest |
 | `TestAnyZonePreCheck` | 5 | any-source CRITICAL via engine, any-dest CRITICAL via engine, any-any CRITICAL via engine, deny-any not flagged, any-zone rule excluded from unauthorized-flow check |
+| `TestCheckIntraZoneLateralMovement` | 10 | cross-sub-zone HIGH, same-sub-zone allowed, multi-zone rule only cross-pairs flagged, full 7-OT-zone rule (42 findings), different canonical zones not flagged, empty raw zones skipped, empty zone_map no findings, disabled/deny rule skipped, mixed canonical zones only same-canonical flagged |
 
 Fixtures `make_policy()` and `make_fw_rule()` provide sensible defaults for minimal test setup.
+`make_fw_rule()` accepts optional `raw_source_zones` / `raw_dest_zones` for intra-zone tests.

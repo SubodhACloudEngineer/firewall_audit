@@ -5,7 +5,7 @@ Each returns a list of Finding objects.
 """
 
 import logging
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from app.models import PolicyRule, FirewallRule, Finding
 
@@ -336,6 +336,99 @@ def check_hygiene(firewall_rules: List[FirewallRule]) -> List[Finding]:
                 break  # Only report the first shadowing rule
 
     logger.info(f"Hygiene check: {len(findings)} findings")
+    return findings
+
+
+# ─────────────────────────────────────────────────────────────
+# CHECK 5: INTRA-ZONE LATERAL MOVEMENT
+# Cross-sub-zone traffic within the same canonical ATPSG zone
+# ─────────────────────────────────────────────────────────────
+
+def check_intra_zone_lateral_movement(
+    firewall_rules: List[FirewallRule],
+    zone_map: Dict[str, str],
+) -> List[Finding]:
+    """
+    Detect cross-sub-zone lateral movement within the same canonical ATPSG zone.
+
+    Context: the Security Policy Matrix contains a cell for "OT Zone → OT Zone"
+    that states "Within a shop may be allowed; Between shops should not be allowed."
+    After zone normalisation, multiple raw firewall zones (OT-AD, OT-PA, OT-PR, …)
+    all collapse to the single canonical name "ot zone", making the standard
+    Cartesian checks blind to cross-sub-zone flows.
+
+    This check re-examines each allow rule using the pre-translation zone names
+    stored in FirewallRule.raw_source_zones / raw_dest_zones:
+
+      - For each canonical ATPSG zone that appears on both the source and
+        destination sides of the rule, build the Cartesian product of the raw
+        sub-zone names.
+      - Pairs where raw_src == raw_dst are within the same sub-zone ("same shop")
+        and are allowed.
+      - Pairs where raw_src != raw_dst cross sub-zone boundaries ("between shops")
+        and are flagged as HIGH.
+
+    Example:
+      Rule src={ot-pa, ot-pr} dst={ot-pa, ot-pr} with zone_map mapping both to
+      "ot zone" → 2 HIGH findings: (ot-pa → ot-pr) and (ot-pr → ot-pa).
+      Pairs (ot-pa → ot-pa) and (ot-pr → ot-pr) are not flagged.
+
+    Requires zone_map to be non-empty; if no zone_map is provided (empty dict)
+    each raw zone maps to itself so no collapse occurs and no findings are raised.
+    """
+    findings = []
+    for rule in firewall_rules:
+        if not rule.enabled:
+            continue
+        if rule.action != "allow":
+            continue
+        if not rule.raw_source_zones or not rule.raw_dest_zones:
+            continue  # raw zones not populated (pre-normalizer path); skip
+
+        # Group raw source and dest zones by canonical ATPSG zone name
+        src_by_canonical: Dict[str, set] = {}
+        for raw in rule.raw_source_zones:
+            canonical = zone_map.get(raw, raw)
+            src_by_canonical.setdefault(canonical, set()).add(raw)
+
+        dst_by_canonical: Dict[str, set] = {}
+        for raw in rule.raw_dest_zones:
+            canonical = zone_map.get(raw, raw)
+            dst_by_canonical.setdefault(canonical, set()).add(raw)
+
+        # For each canonical zone present on both sides, check cross-sub-zone pairs
+        for canonical, src_raws in src_by_canonical.items():
+            dst_raws = dst_by_canonical.get(canonical)
+            if not dst_raws:
+                continue
+
+            for raw_src in sorted(src_raws):
+                for raw_dst in sorted(dst_raws):
+                    if raw_src == raw_dst:
+                        continue  # same sub-zone → within-shop, allowed
+                    findings.append(Finding(
+                        rule_name=rule.rule_name,
+                        finding_type="INTRA_ZONE_LATERAL_MOVEMENT",
+                        severity=Finding.SEVERITY_HIGH,
+                        description=(
+                            f"Rule '{rule.rule_name}' permits lateral movement from "
+                            f"sub-zone '{raw_src}' to '{raw_dst}'. Both map to canonical "
+                            f"zone '{canonical}'. Cross-sub-zone traffic should not be allowed."
+                        ),
+                        details={
+                            "raw_source_zone": raw_src,
+                            "raw_dest_zone":   raw_dst,
+                            "canonical_zone":  canonical,
+                            "rule_index":      rule.rule_index,
+                        },
+                        remediation=(
+                            f"Restrict the rule so that '{raw_src}' cannot reach '{raw_dst}'. "
+                            f"Split into per-sub-zone rules that only allow same-zone traffic, "
+                            f"or remove the conflicting zone entries from this rule."
+                        ),
+                    ))
+
+    logger.info(f"Intra-zone lateral movement check: {len(findings)} findings")
     return findings
 
 

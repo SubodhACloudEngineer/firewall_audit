@@ -10,6 +10,7 @@ from app.validation.checks import (
     check_condition_violations,
     check_missing_implementations,
     check_hygiene,
+    check_intra_zone_lateral_movement,
     expand_zone_pairs,
 )
 from app.validation.engine import run_audit
@@ -55,6 +56,8 @@ def make_fw_rule(
     log_at_session_end=True,
     enabled=True,
     rule_index=0,
+    raw_source_zones=None,
+    raw_dest_zones=None,
 ):
     return FirewallRule(
         rule_name=rule_name,
@@ -72,6 +75,8 @@ def make_fw_rule(
         log_at_session_end=log_at_session_end,
         enabled=enabled,
         rule_index=rule_index,
+        raw_source_zones=raw_source_zones or set(),
+        raw_dest_zones=raw_dest_zones or set(),
     )
 
 
@@ -596,3 +601,170 @@ class TestAnyZonePreCheck:
         result  = run_audit([], [fw_rule])
         assert not any(f.finding_type == "UNAUTHORIZED_FLOW" for f in result.findings)
         assert any(f.finding_type == "HYGIENE_ANY_ANY_PERMIT" for f in result.findings)
+
+
+# ─────────────────────────────────────────────────────────────
+# CHECK 5: INTRA-ZONE LATERAL MOVEMENT
+# Cross-sub-zone traffic within the same canonical ATPSG zone
+# ─────────────────────────────────────────────────────────────
+
+_OT_ZONE_MAP = {
+    "ot-ad": "ot zone",
+    "ot-as": "ot zone",
+    "ot-pa": "ot zone",
+    "ot-pr": "ot zone",
+    "ot-so": "ot zone",
+    "ot-sr": "ot zone",
+    "ot-we": "ot zone",
+    "outside": "it zone",
+    "ot-dmz-access": "ot dmz access",
+    "ot-dmz-sr": "ot dmz other",
+}
+
+
+class TestCheckIntraZoneLateralMovement:
+
+    def test_cross_sub_zone_flagged_high(self):
+        # OT-PA → OT-PR: different sub-zones within OT Zone → HIGH
+        rule = make_fw_rule(
+            rule_name="ot-lateral",
+            source_zones={"ot zone"},
+            dest_zones={"ot zone"},
+            raw_source_zones={"ot-pa"},
+            raw_dest_zones={"ot-pr"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.severity == Finding.SEVERITY_HIGH
+        assert f.finding_type == "INTRA_ZONE_LATERAL_MOVEMENT"
+        assert "ot-pa" in f.description
+        assert "ot-pr" in f.description
+        assert "ot zone" in f.description
+
+    def test_same_sub_zone_not_flagged(self):
+        # OT-PA → OT-PA: same sub-zone ("within a shop") → no finding
+        rule = make_fw_rule(
+            rule_name="ot-same-zone",
+            source_zones={"ot zone"},
+            dest_zones={"ot zone"},
+            raw_source_zones={"ot-pa"},
+            raw_dest_zones={"ot-pa"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert findings == []
+
+    def test_multi_zone_rule_produces_cross_pairs_only(self):
+        # src={ot-pa, ot-pr} dst={ot-pa, ot-pr}
+        # Cross-pairs: (ot-pa→ot-pr) and (ot-pr→ot-pa) → 2 HIGH findings
+        # Same-pairs: (ot-pa→ot-pa) and (ot-pr→ot-pr) are NOT flagged
+        rule = make_fw_rule(
+            rule_name="multi-ot",
+            source_zones={"ot zone"},
+            dest_zones={"ot zone"},
+            raw_source_zones={"ot-pa", "ot-pr"},
+            raw_dest_zones={"ot-pa", "ot-pr"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert len(findings) == 2
+        pairs = {(f.details["raw_source_zone"], f.details["raw_dest_zone"]) for f in findings}
+        assert pairs == {("ot-pa", "ot-pr"), ("ot-pr", "ot-pa")}
+        assert all(f.severity == Finding.SEVERITY_HIGH for f in findings)
+
+    def test_full_ot_zone_rule_correct_count(self):
+        # Customer scenario: src and dst both contain all 7 OT sub-zones.
+        # OT sub-zones: ot-ad, ot-as, ot-pa, ot-pr, ot-so, ot-sr, ot-we (7 zones)
+        # Cross-pairs = 7×7 - 7 same = 42 findings.
+        # "outside" maps to "it zone" → outside→outside is same canonical but same raw → 0.
+        ot_subs = {"ot-ad", "ot-as", "ot-pa", "ot-pr", "ot-so", "ot-sr", "ot-we"}
+        rule = make_fw_rule(
+            rule_name="allow-ot-all",
+            source_zones={"ot zone", "it zone"},
+            dest_zones={"ot zone", "it zone"},
+            raw_source_zones=ot_subs | {"outside"},
+            raw_dest_zones=ot_subs | {"outside"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        # 7×7 = 49 pairs minus 7 same-zone = 42 cross-zone HIGH findings
+        assert len(findings) == 42
+        assert all(f.severity == Finding.SEVERITY_HIGH for f in findings)
+        assert all(f.details["canonical_zone"] == "ot zone" for f in findings)
+
+    def test_different_canonical_zones_not_flagged_by_this_check(self):
+        # OT-PA → OT-DMZ-Access maps to different canonical zones (ot zone vs ot dmz access)
+        # → this check does NOT flag it (that's unauthorized-flow's job)
+        rule = make_fw_rule(
+            rule_name="ot-to-dmz",
+            source_zones={"ot zone"},
+            dest_zones={"ot dmz access"},
+            raw_source_zones={"ot-pa"},
+            raw_dest_zones={"ot-dmz-access"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert findings == []
+
+    def test_empty_raw_zones_skipped(self):
+        # Rules without raw zone data (legacy or pre-normalizer) are skipped
+        rule = make_fw_rule(
+            rule_name="no-raw",
+            source_zones={"ot zone"},
+            dest_zones={"ot zone"},
+            raw_source_zones=set(),
+            raw_dest_zones=set(),
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert findings == []
+
+    def test_empty_zone_map_produces_no_findings(self):
+        # Without a zone_map, each raw zone is its own canonical.
+        # ot-pa and ot-pr map to themselves → different canonicals → no cross-zone.
+        rule = make_fw_rule(
+            rule_name="no-map",
+            source_zones={"ot-pa"},
+            dest_zones={"ot-pr"},
+            raw_source_zones={"ot-pa"},
+            raw_dest_zones={"ot-pr"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], {})
+        assert findings == []
+
+    def test_disabled_rule_not_checked(self):
+        rule = make_fw_rule(
+            rule_name="disabled",
+            source_zones={"ot zone"},
+            dest_zones={"ot zone"},
+            raw_source_zones={"ot-pa"},
+            raw_dest_zones={"ot-pr"},
+            enabled=False,
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert findings == []
+
+    def test_deny_rule_not_checked(self):
+        rule = make_fw_rule(
+            rule_name="deny-rule",
+            source_zones={"ot zone"},
+            dest_zones={"ot zone"},
+            raw_source_zones={"ot-pa"},
+            raw_dest_zones={"ot-pr"},
+            action="deny",
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert findings == []
+
+    def test_mixed_canonical_zones_only_same_canonical_flagged(self):
+        # src has ot-pa (→ ot zone) and ot-dmz-access (→ ot dmz access)
+        # dst has ot-pr (→ ot zone) and ot-dmz-sr (→ ot dmz other)
+        # Only ot-pa→ot-pr are in the same canonical zone → 1 HIGH finding
+        # ot-dmz-access and ot-dmz-sr map to DIFFERENT canonicals → no crossing
+        rule = make_fw_rule(
+            rule_name="mixed",
+            source_zones={"ot zone", "ot dmz access"},
+            dest_zones={"ot zone", "ot dmz other"},
+            raw_source_zones={"ot-pa", "ot-dmz-access"},
+            raw_dest_zones={"ot-pr", "ot-dmz-sr"},
+        )
+        findings = check_intra_zone_lateral_movement([rule], _OT_ZONE_MAP)
+        assert len(findings) == 1
+        assert findings[0].details["raw_source_zone"] == "ot-pa"
+        assert findings[0].details["raw_dest_zone"] == "ot-pr"

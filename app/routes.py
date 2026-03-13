@@ -97,8 +97,9 @@ def upload_and_audit():
         firewall_rules = parse_rulebase(rulebase_path)
         policy_rules, firewall_rules = normalize_all(policy_rules, firewall_rules, zone_map)
 
-        # Validation
-        result = run_audit(policy_rules, firewall_rules)
+        # Validation — pass zone_map so the intra-zone lateral-movement check
+        # can resolve raw sub-zone names back to canonical ATPSG zones.
+        result = run_audit(policy_rules, firewall_rules, zone_map)
 
         # Generate and persist reports
         report_dir = Path(current_app.config["REPORT_FOLDER"]) / job_id

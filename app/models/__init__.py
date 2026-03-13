@@ -42,6 +42,11 @@ class FirewallRule:
     log_at_session_end: bool
     enabled: bool
     rule_index: int                  # original row order in rulebase
+    # Pre-translation zone names (lower-cased raw values before zone_map is applied).
+    # Used by check_intra_zone_lateral_movement to detect cross-sub-zone traffic
+    # within the same canonical ATPSG zone (e.g. OT-PA → OT-PR both map to "ot zone").
+    raw_source_zones: Set[str] = field(default_factory=set)
+    raw_dest_zones:   Set[str] = field(default_factory=set)
 
 
 @dataclass
