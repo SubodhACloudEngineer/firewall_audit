@@ -5,7 +5,7 @@ Orchestrates all checks, scores findings, and returns a structured AuditResult.
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import Dict, List, Optional
 
 from app.models import PolicyRule, FirewallRule, Finding
 from app.validation.checks import (
@@ -13,6 +13,7 @@ from app.validation.checks import (
     check_condition_violations,
     check_missing_implementations,
     check_hygiene,
+    check_intra_zone_lateral_movement,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class AuditResult:
 def run_audit(
     policy_rules: List[PolicyRule],
     firewall_rules: List[FirewallRule],
+    zone_map: Optional[Dict[str, str]] = None,
 ) -> AuditResult:
     """
     Run all validation checks and return a scored AuditResult.
@@ -100,6 +102,7 @@ def run_audit(
     all_findings.extend(check_condition_violations(clean_rules, policy_rules))
     all_findings.extend(check_missing_implementations(allow_rules, policy_rules))
     all_findings.extend(check_hygiene(allow_rules))
+    all_findings.extend(check_intra_zone_lateral_movement(clean_rules, zone_map or {}))
 
     score = _calculate_score(all_findings, allow_rules)
 

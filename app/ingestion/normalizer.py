@@ -97,6 +97,12 @@ def normalize_firewall_rules(
     if zone_map:
         logger.info(f"Applying zone map with {len(zone_map)} entries to firewall rules")
     for rule in rules:
+        # Snapshot the lowercased-but-pre-translation zone names so that the
+        # intra-zone lateral-movement check can still see the original sub-zone
+        # names (e.g. "ot-pa", "ot-pr") after zone_map collapses them to the
+        # same canonical name ("ot zone").
+        rule.raw_source_zones = {z.strip().lower() for z in rule.source_zones}
+        rule.raw_dest_zones   = {z.strip().lower() for z in rule.dest_zones}
         rule.source_zones = _normalize_zones(rule.source_zones, zone_map)
         rule.dest_zones   = _normalize_zones(rule.dest_zones,   zone_map)
         rule.services      = _normalize_ports(rule.services)
