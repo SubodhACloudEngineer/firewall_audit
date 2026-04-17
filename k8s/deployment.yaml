@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firewall-audit
+  namespace: firewall-audit
+  labels:
+    app: firewall-audit
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: firewall-audit
+  template:
+    metadata:
+      labels:
+        app: firewall-audit
+    spec:
+      containers:
+        - name: firewall-audit
+          # Replace <ACR_NAME> with your Azure Container Registry name
+          image: <ACR_NAME>.azurecr.io/firewall-audit:latest
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: firewall-audit-config
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: firewall-audit-secret
+                  key: SECRET_KEY
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+            - name: reports
+              mountPath: /app/reports
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: firewall-audit-uploads
+        - name: reports
+          persistentVolumeClaim:
+            claimName: firewall-audit-reports

@@ -30,8 +30,16 @@ Upload (xlsx + csv)
 - `app/templates/index.html`         — upload UI; posts to /upload, renders findings table
 - `app/static/ntt_data_logo.png.png` — NTT DATA company logo (PNG); displayed in UI header
 - `app/static/logo.svg`              — NTT DATA company logo (SVG variant)
-- `tests/test_checks.py`             — 42 pytest unit tests for all 4 validation checks
+- `tests/test_checks.py`             — 61 pytest unit tests for all 5 validation checks
 - `.gitignore`                       — excludes __pycache__, bytecode, venvs, editor artifacts
+- `Dockerfile`                       — containerises the Flask app using gunicorn; exposes port 5000
+- `.dockerignore`                    — excludes __pycache__, .git, venvs, uploads/, reports/ from image
+- `docker-compose.yml`               — single-VM / ESXi deployment; bind-mount volumes for uploads and reports
+- `k8s/configmap.yaml`               — non-secret config (FLASK_DEBUG, folder paths) for AKS
+- `k8s/persistentvolumeclaim.yaml`   — Azure Files PVCs (ReadWriteMany) for uploads (5 Gi) and reports (10 Gi)
+- `k8s/deployment.yaml`              — AKS Deployment: 2 replicas, ACR image, resource limits, health probes
+- `k8s/service.yaml`                 — ClusterIP Service routing port 80 → container 5000
+- `k8s/ingress.yaml`                 — NGINX Ingress with TLS (cert-manager), 50 MB body limit
 
 ## Data Models
 - PolicyRule: what the MATRIX says is allowed/denied (source_zone, dest_zone, ports, profiles, action, deny_severity)
@@ -84,6 +92,53 @@ python run.py
 # Run unit tests
 pytest tests/test_checks.py -v
 ```
+
+## Deployment
+
+### Local / VMware ESXi (Docker Compose)
+```bash
+# Build and start
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+Uploads and reports are persisted to `./uploads/` and `./reports/` on the host via bind-mounts.
+Set `SECRET_KEY` in a `.env` file next to `docker-compose.yml` before running in production.
+
+### Azure Kubernetes Service (AKS)
+```bash
+# 1. Build and push image to Azure Container Registry
+az acr build --registry <ACR_NAME> --image firewall-audit:latest .
+
+# 2. Create namespace
+kubectl create namespace firewall-audit
+
+# 3. Create secret for SECRET_KEY
+kubectl create secret generic firewall-audit-secret \
+  --namespace firewall-audit \
+  --from-literal=SECRET_KEY='<your-secret-key>'
+
+# 4. Apply manifests (order matters: PVCs before Deployment)
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/persistentvolumeclaim.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/ingress.yaml
+
+# 5. Check rollout
+kubectl rollout status deployment/firewall-audit -n firewall-audit
+```
+
+**Before applying:**
+- Replace `<ACR_NAME>` in `k8s/deployment.yaml` with your ACR name.
+- Replace `firewall-audit.example.com` in `k8s/ingress.yaml` with your actual hostname.
+- Ensure the AKS cluster has the NGINX ingress controller and cert-manager installed.
+- The PVCs use `storageClassName: azurefile-csi` (available by default on AKS); swap to
+  `azuredisk-csi` (ReadWriteOnce) if only one replica is needed.
 
 ## Matrix Parser — Supported Formats
 
@@ -149,6 +204,8 @@ Zones not present in the map are kept as-is (pass-through).
 - [ ] GET /results/<job_id>           — retrieve stored results
 - [x] GET /download/<job_id>/excel    — stream saved .xlsx report (done 2026-03-05)
 - [x] GET /download/<job_id>/pdf      — stream saved .pdf report (done 2026-03-06)
+- [x] Dockerfile + docker-compose.yml — ESXi/local deployment (done 2026-04-17)
+- [x] k8s/ manifests                  — AKS deployment (done 2026-04-17)
 
 ## Reporting — Excel
 `generate_excel_report(result: AuditResult) -> bytes` (openpyxl)
