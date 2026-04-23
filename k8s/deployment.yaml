@@ -18,7 +18,7 @@ spec:
       containers:
         - name: firewall-audit
           # Replace <ACR_NAME> with your Azure Container Registry name
-          image: <ACR_NAME>.azurecr.io/firewall-audit:latest
+          image: aksoneacr123.azurecr.io/firewall-audit:latest
           ports:
             - containerPort: 5000
           envFrom:
